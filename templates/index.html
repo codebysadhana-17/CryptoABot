@@ -1,0 +1,1628 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌐 Crypto Arbitrage Bot</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .tab-view {
+            display: none;
+            animation: fadeIn 0.25s ease-in-out;
+        }
+        .tab-view.active {
+            display: block;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .size-btn {
+            background: #0c1526;
+            border: 1px solid #202e45;
+            color: #94a3b8;
+            padding: 10px 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+        .size-btn.active, .size-btn:hover {
+            background: #2563eb;
+            color: white;
+            border-color: #3b82f6;
+        }
+
+        /* EXECUTION MODAL */
+        #execModalOverlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(4, 9, 20, 0.85);
+            backdrop-filter: blur(8px);
+            z-index: 99999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+        .exec-modal {
+            background: #111a2b;
+            border: 1px solid #263753;
+            border-radius: 16px;
+            width: 480px;
+            max-width: 90%;
+            padding: 30px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+            position: relative;
+        }
+        .step-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            margin-bottom: 20px;
+            opacity: 0.3;
+            transition: opacity 0.3s ease;
+        }
+        .step-item.active {
+            opacity: 1;
+        }
+        .step-item.completed .step-icon {
+            background: #22c55e;
+            color: white;
+        }
+        .step-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #1e293b;
+            border: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+        .pulse-loader {
+            width: 14px;
+            height: 14px;
+            border: 2px solid #3b82f6;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        /* PRINT STYLES FOR TRADE HISTORY AUDIT REPORT */
+        @media print {
+            body { background: white !important; color: black !important; font-family: sans-serif; }
+            .sidebar, header, #refreshLogBtn, .auto-status, .switch, button, #execModalOverlay, footer, .bot-status { display: none !important; }
+            .main { margin-left: 0 !important; padding: 20px !important; }
+            .tab-view { display: none !important; }
+            #view-trades { display: block !important; }
+            .panel { background: white !important; border: 1px solid #ccc !important; box-shadow: none !important; }
+            .trade-table { width: 100% !important; border-collapse: collapse !important; margin-top: 15px !important; }
+            .trade-table th, .trade-table td { border: 1px solid #cbd5e1 !important; color: black !important; padding: 8px !important; font-size: 11px !important; text-align: left; }
+            .trade-table th { background: #f1f5f9 !important; color: #0f172a !important; font-weight: bold; }
+            .profit-positive { color: #16a34a !important; font-weight: bold; }
+            .profit-negative { color: #dc2626 !important; font-weight: bold; }
+            .print-only-header { display: block !important; text-align: center; margin-bottom: 20px; border-bottom: 2px solid #0284c7; padding-bottom: 10px; }
+        }
+        .print-only-header { display: none; }
+    </style>
+</head>
+
+<body>
+
+<!-- =====================================================
+     SIDEBAR
+===================================================== -->
+<aside class="sidebar">
+    <div class="logo">
+        ₿ Crypto Arbitrage
+    </div>
+
+    <nav>
+        <a href="/" id="nav-dashboard" class="nav-link active" onclick="switchTab(event, 'dashboard')">
+            🏠 Dashboard
+        </a>
+        <a href="/prices" id="nav-prices" class="nav-link" onclick="switchTab(event, 'prices')">
+            📊 Live Prices
+        </a>
+        <a href="/arbitrage" id="nav-arbitrage" class="nav-link" onclick="switchTab(event, 'arbitrage')">
+            ⚡ Arbitrage
+        </a>
+        <a href="/trades" id="nav-trades" class="nav-link" onclick="switchTab(event, 'trades')">
+            🔄 Trade History
+        </a>
+        <a href="/settings" id="nav-settings" class="nav-link" onclick="switchTab(event, 'settings')">
+            ⚙ Settings
+        </a>
+    </nav>
+
+    <div class="bot-status">
+        <span class="dot"></span>
+        <span>Bot Online</span>
+    </div>
+</aside>
+
+
+<!-- AUTO TRADE POPUP -->
+<div id="autoTradePopup"></div>
+<div id="toastContainer" style="position:fixed; top:20px; right:20px; z-index:99999; display:flex; flex-direction:column; gap:10px; pointer-events:none;"></div>
+
+
+<!-- MAIN CONTENT -->
+<main class="main">
+
+    <!-- HEADER -->
+    <header>
+        <div>
+            <h1 id="pageTitle">Dashboard</h1>
+            <p id="pageSubtitle">Crypto Arbitrage Bot Overview</p>
+        </div>
+        <div style="display:flex; align-items:center; gap:15px; flex-wrap:wrap;">
+            <!-- QUICK AUTO TRADE TOGGLE -->
+            <div style="display:flex; align-items:center; gap:10px; background:#0c1526; border:1px solid #202e45; padding:6px 14px; border-radius:24px;">
+                <span style="font-size:12px; font-weight:600; color:#cbd5e1;">Auto Trade:</span>
+                <label class="switch" style="transform:scale(0.85); margin:0;">
+                    <input type="checkbox" id="headerAutoTradeToggle" onchange="quickToggleAutoTrade(this.checked)">
+                    <span class="slider"></span>
+                </label>
+                <span id="headerAutoTradeBadge" style="font-size:11px; font-weight:bold; padding:3px 8px; border-radius:12px; background:#2b1313; color:#ef4444;">
+                    OFF 🔴
+                </span>
+            </div>
+            <div id="time">--:--:--</div>
+        </div>
+    </header>
+
+
+    <!-- =====================================================
+         TAB 1: DASHBOARD
+    ===================================================== -->
+    <div id="view-dashboard" class="tab-view active">
+
+
+
+        <section class="cards">
+            <div class="card">
+                <span>Total Equity</span>
+                <h2 id="balance">0.00</h2>
+                <small>USDT (Real Wallet)</small>
+            </div>
+
+            <div class="card">
+                <span>Total Net Profit</span>
+                <h2 id="profit">0.00</h2>
+                <small>USDT (Persistent)</small>
+            </div>
+
+            <div class="card">
+                <span>Total Executed</span>
+                <h2 id="trades">0</h2>
+                <small>Real Trades</small>
+            </div>
+
+            <div class="card">
+                <span>Execution Engine</span>
+                <h2 class="online" id="tradingModeBadge">● Realistic Sim</h2>
+                <small id="botSubStatus">Auto Arbitrage Active</small>
+            </div>
+        </section>
+
+        <!-- EXCHANGE PORTFOLIO -->
+        <section class="panel" style="margin-bottom:24px;">
+            <div class="panel-title">
+                <div>
+                    <h2>Exchange Wallet Balances</h2>
+                    <p>Actual balances fetched securely from your connected exchanges</p>
+                </div>
+                <span id="walletLastUpdated" style="color:#64748b; font-size:12px;">Updating...</span>
+            </div>
+
+            <div class="exchange-portfolio-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:16px;">
+                <div class="ex-card" style="background:#0c1526; padding:16px; border-radius:10px; border:1px solid #202e45;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="color:#94a3b8; font-size:12px; font-weight:600;">BINANCE WALLET</span>
+                        <span id="binanceStatus" style="font-size:11px; color:#64748b;">Checking...</span>
+                    </div>
+                    <h3 id="binanceUsdt" style="font-size:20px; color:#f8fafc; margin-top:6px;">$0.00 USDT</h3>
+                    <small id="binanceBtc" style="color:#64748b;">0.0000 BTC</small>
+                </div>
+
+                <div class="ex-card" style="background:#0c1526; padding:16px; border-radius:10px; border:1px solid #202e45;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="color:#94a3b8; font-size:12px; font-weight:600;">BYBIT WALLET</span>
+                        <span id="bybitStatus" style="font-size:11px; color:#64748b;">Checking...</span>
+                    </div>
+                    <h3 id="bybitUsdt" style="font-size:20px; color:#f8fafc; margin-top:6px;">$0.00 USDT</h3>
+                    <small id="bybitBtc" style="color:#64748b;">0.0000 BTC</small>
+                </div>
+
+                <div class="ex-card" style="background:#0c1526; padding:16px; border-radius:10px; border:1px solid #202e45;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="color:#94a3b8; font-size:12px; font-weight:600;">COINBASE WALLET</span>
+                        <span id="coinbaseStatus" style="font-size:11px; color:#64748b;">Checking...</span>
+                    </div>
+                    <h3 id="coinbaseUsdt" style="font-size:20px; color:#f8fafc; margin-top:6px;">$0.00 USDT</h3>
+                    <small id="coinbaseBtc" style="color:#64748b;">0.0000 BTC</small>
+                </div>
+            </div>
+        </section>
+
+        <!-- CURRENT OPPORTUNITY -->
+        <section class="panel">
+            <div class="panel-title">
+                <div>
+                    <h2>Current Arbitrage Opportunity</h2>
+                    <p>Live market scan via CCXT</p>
+                </div>
+                <span id="opportunity">Scanning market...</span>
+            </div>
+
+            <div class="opportunity">
+                <div>
+                    <small>BUY FROM</small>
+                    <h3 id="buyExchange">--</h3>
+                    <p id="buyPrice">-- USDT</p>
+                </div>
+
+                <div class="arrow">→</div>
+
+                <div>
+                    <small>SELL ON</small>
+                    <h3 id="sellExchange">--</h3>
+                    <p id="sellPrice">-- USDT</p>
+                </div>
+
+                <div>
+                    <small>NET PROFIT</small>
+                    <h3 id="netProfit">-- USDT</h3>
+                </div>
+            </div>
+        </section>
+    </div>
+
+
+    <!-- =====================================================
+         TAB 2: LIVE PRICES
+    ===================================================== -->
+    <div id="view-prices" class="tab-view">
+        <section class="cards">
+            <div class="card">
+                <span>Binance</span>
+                <h2 id="binance">--</h2>
+                <small>BTC / USDT</small>
+            </div>
+
+            <div class="card">
+                <span>Bybit</span>
+                <h2 id="bybit">--</h2>
+                <small>BTC / USDT</small>
+            </div>
+
+            <div class="card">
+                <span>Coinbase</span>
+                <h2 id="coinbase">--</h2>
+                <small>BTC / USDT</small>
+            </div>
+        </section>
+    </div>
+
+
+    <!-- =====================================================
+         TAB 3: ARBITRAGE
+    ===================================================== -->
+    <div id="view-arbitrage" class="tab-view">
+        <section class="panel">
+            <div class="panel-title">
+                <div>
+                    <h2>Live Pair Analysis</h2>
+                    <p>Order book & spread calculation</p>
+                </div>
+                <span id="oppBadge" style="background:#132b20; color:#22c55e; padding:6px 12px; border-radius:20px; font-size:12px; border:1px solid #1e5a3b;">
+                    Scanning exchanges...
+                </span>
+            </div>
+
+            <div class="opportunity">
+                <div>
+                    <small>BUY FROM</small>
+                    <h3 id="arbBuy">--</h3>
+                    <p id="arbBuyPrice">-- USDT</p>
+                </div>
+
+                <div class="arrow">→</div>
+
+                <div>
+                    <small>SELL ON</small>
+                    <h3 id="arbSell">--</h3>
+                    <p id="arbSellPrice">-- USDT</p>
+                </div>
+
+                <div>
+                    <small>PRICE DIFFERENCE</small>
+                    <h3 id="arbDifference">-- USDT</h3>
+                </div>
+
+                <div>
+                    <small>NET PROFIT</small>
+                    <h3 id="arbNetProfit" style="color:#22c55e;">-- USDT</h3>
+                </div>
+            </div>
+
+            <!-- ORDER SIZING SELECTOR -->
+            <div style="margin-top:25px;">
+                <label style="display:block; color:#94a3b8; font-size:13px; font-weight:600; margin-bottom:10px;">SELECT TRADE AMOUNT (USDT):</label>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                    <button class="size-btn active" onclick="selectTradeSize(500, this)">$500</button>
+                    <button class="size-btn" onclick="selectTradeSize(1000, this)">$1,000</button>
+                    <button class="size-btn" onclick="selectTradeSize(2500, this)">$2,500</button>
+                    <button class="size-btn" onclick="selectTradeSize(5000, this)">$5,000</button>
+                    <input type="number" id="customTradeSize" placeholder="Custom USDT" style="background:#0c1526; border:1px solid #202e45; color:white; padding:10px 14px; border-radius:8px; width:130px; font-size:14px;" oninput="onCustomSizeInput(this.value)">
+                </div>
+            </div>
+
+            <!-- TRADE BUTTON -->
+            <button id="tradeButton" onclick="executeTrade()" style="width:100%; margin-top:25px; padding:16px; border:none; border-radius:10px; background:#2563eb; color:white; font-size:17px; font-weight:600; cursor:pointer; transition:0.2s ease;">
+                ⚡ Execute Real Trade
+            </button>
+
+            <div id="message" style="margin-top:15px; text-align:center; font-weight:600;"></div>
+        </section>
+    </div>
+
+
+    <!-- =====================================================
+         TAB 4: TRADE HISTORY
+    ===================================================== -->
+    <div id="view-trades" class="tab-view">
+        <section class="panel">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div class="auto-status">
+                    <span class="dot"></span>
+                    <span>Realistic Execution Engine Active</span>
+                </div>
+                <div style="display:flex; gap:10px;">
+                    <button onclick="window.print()" style="background:#2563eb; border:none; color:white; padding:8px 14px; border-radius:8px; cursor:pointer; font-weight:600; font-size:12px;">
+                        🖨️ Print / Export PDF
+                    </button>
+                    <button id="refreshLogBtn" onclick="loadTradeHistoryTable(true)" style="background:#1e293b; border:1px solid #334155; color:#cbd5e1; padding:8px 14px; border-radius:8px; cursor:pointer; font-weight:600; font-size:12px; transition:0.2s ease;">
+                        🔄 Refresh Log
+                    </button>
+                    <button onclick="clearTradeHistory()" style="background:#ef4444; border:none; color:white; padding:8px 14px; border-radius:8px; cursor:pointer; font-weight:600; font-size:12px;">
+                        🗑️ Clear History
+                    </button>
+                </div>
+            </div>
+
+            <!-- PRINT HEADINGS -->
+            <div class="print-only-header">
+                <h1 style="font-size:22px; margin:0; color:#0f172a;">Crypto Arbitrage Bot • Trade History Audit Report</h1>
+                <p style="font-size:12px; color:#64748b; margin:4px 0 0 0;">Official Log of Executed Real & Simulated Trades</p>
+            </div>
+
+            <div style="overflow-x:auto; margin-top:25px;">
+                <table class="trade-table">
+                    <thead>
+                        <tr>
+                            <th>Order IDs</th>
+                            <th>Route (Buy ➔ Sell)</th>
+                            <th>Buy Price</th>
+                            <th>Sell Price</th>
+                            <th>Volume (BTC)</th>
+                            <th>Size (USDT)</th>
+                            <th>Slippage</th>
+                            <th>Fees</th>
+                            <th>Net Profit</th>
+                            <th>Executed At</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tradeTable">
+                        <tr>
+                            <td colspan="10" style="text-align:center; padding:30px; color:#64748b;">
+                                Loading executed trade log...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+
+    <!-- =====================================================
+         TAB 5: SETTINGS
+    ===================================================== -->
+    <div id="view-settings" class="tab-view">
+        <section class="settings-grid">
+            <!-- AUTO TRADE CARD -->
+            <div class="settings-card">
+                <div class="settings-card-header">
+                    <div class="settings-icon auto-icon">🤖</div>
+                    <div>
+                        <h2>Automatic Trading</h2>
+                        <p>Automatically execute profitable real trades</p>
+                    </div>
+                </div>
+                <div class="setting-divider"></div>
+                <div class="setting-row">
+                    <div>
+                        <strong>Auto Trade</strong>
+                        <small id="autoTradeDescription">Automatic trading is enabled</small>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="autoTrade">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="auto-status-box">
+                    <span class="status-indicator" id="autoStatusDot"></span>
+                    <span id="autoStatusText">Checking status...</span>
+                </div>
+            </div>
+
+            <!-- PROFIT & COOLDOWN SETTINGS -->
+            <div class="settings-card">
+                <div class="settings-card-header">
+                    <div class="settings-icon profit-icon">💰</div>
+                    <div>
+                        <h2>Profit & Cooldown Configuration</h2>
+                        <p>Set minimum profit required and trade interval cooldown</p>
+                    </div>
+                </div>
+                <div class="setting-divider"></div>
+                <label class="input-label">Minimum Profit</label>
+                <div class="profit-input-wrapper">
+                    <input type="number" id="minProfit" min="0" step="0.01" placeholder="0.50">
+                    <span>USDT</span>
+                </div>
+                <small class="input-help">Trades below this profit will be skipped automatically.</small>
+
+                <div style="margin-top:16px;">
+                    <label style="display:block; color:#cbd5e1; font-weight:600; font-size:12px; margin-bottom:6px;">AUTO TRADE COOLDOWN (SECONDS)</label>
+                    <input type="number" id="autoCooldown" min="1" max="300" value="30" style="width:100%; background:#0c1526; border:1px solid #202e45; color:white; padding:10px; border-radius:8px; font-size:14px;">
+                    <small style="color:#64748b; font-size:11px; display:block; margin-top:4px;">Minimum wait time between automated trades on the same pair.</small>
+                </div>
+            </div>
+
+            <!-- TRADING MODE & SYMBOL SETTINGS -->
+            <div class="settings-card">
+                <div class="settings-card-header">
+                    <div class="settings-icon mode-icon">📊</div>
+                    <div>
+                        <h2>Execution Engine & Mode</h2>
+                        <p>Choose Trading Environment, Asset Pair & Order Sizing</p>
+                    </div>
+                </div>
+                <div class="setting-divider"></div>
+                
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-bottom:16px;">
+                    <div>
+                        <label style="display:block; color:#cbd5e1; font-weight:600; font-size:13px; margin-bottom:6px;">TRADING ENVIRONMENT:</label>
+                        <select id="tradingModeSelect" style="width:100%; background:#0c1526; border:1px solid #202e45; color:white; padding:10px; border-radius:8px; font-size:13px; font-weight:600;">
+                            <option value="LIVE">🔴 Live Real Trading Mode (Exchange API Keys)</option>
+                            <option value="TESTNET">🧪 Testnet / Sandbox Trading Mode</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display:block; color:#cbd5e1; font-weight:600; font-size:13px; margin-bottom:6px;">TRADING PAIR SYMBOL:</label>
+                        <select id="tradingSymbolSelect" style="width:100%; background:#0c1526; border:1px solid #202e45; color:white; padding:10px; border-radius:8px; font-size:13px; font-weight:600;">
+                            <option value="BTC/USDT">₿ BTC / USDT</option>
+                            <option value="ETH/USDT">Ξ ETH / USDT</option>
+                            <option value="SOL/USDT">◎ SOL / USDT</option>
+                            <option value="XRP/USDT">✕ XRP / USDT</option>
+                            <option value="BNB/USDT">🟡 BNB / USDT</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px;">
+                    <div>
+                        <label style="display:block; color:#94a3b8; font-size:11px; font-weight:600; margin-bottom:4px;">DEFAULT SIZE ($)</label>
+                        <input type="number" id="tradeAmount" value="1000" min="10" step="50" style="width:100%; background:#0c1526; border:1px solid #202e45; color:white; padding:8px; border-radius:6px; font-size:13px;">
+                    </div>
+                    <div>
+                        <label style="display:block; color:#94a3b8; font-size:11px; font-weight:600; margin-bottom:4px;">SLIPPAGE (%)</label>
+                        <input type="number" id="slippagePct" value="0.05" min="0" max="5" step="0.01" style="width:100%; background:#0c1526; border:1px solid #202e45; color:white; padding:8px; border-radius:6px; font-size:13px;">
+                    </div>
+                    <div>
+                        <label style="display:block; color:#94a3b8; font-size:11px; font-weight:600; margin-bottom:4px;">SLIPPAGE SIM</label>
+                        <label class="switch" style="margin-top:2px;">
+                            <input type="checkbox" id="slippageToggle" checked onchange="toggleSlippageSim(this.checked)">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div style="margin-top:16px; padding-top:12px; border-top:1px solid #1e293b; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <strong style="color:white; font-size:12px;">Reset Paper Wallet Balance</strong>
+                        <p style="color:#64748b; font-size:11px;">Clears paper-trade history only. It never changes real exchange wallets.</p>
+                    </div>
+                    <button type="button" onclick="resetWalletInSettings()" style="background:#ef4444; border:none; padding:6px 12px; border-radius:6px; color:white; font-weight:600; cursor:pointer; font-size:11px;">
+                        ↻ Reset Paper Data
+                    </button>
+                </div>
+            </div>
+
+            <!-- EXCHANGE API KEYS CARD -->
+            <div class="settings-card" style="grid-column: span 2;">
+                <div class="settings-card-header">
+                    <div class="settings-icon exchange-icon">🔑</div>
+                    <div>
+                        <h2>Exchange API Keys (Live Trading)</h2>
+                        <p>Configure API keys for real trading. Use keys with Trading permissions enabled and Withdrawal permissions DISABLED.</p>
+                    </div>
+                </div>
+                <div class="setting-divider"></div>
+                <div class="api-keys-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:20px;">
+                    <!-- BINANCE -->
+                    <div class="key-card" style="background:#0c1526; border:1px solid #202e45; border-radius:12px; padding:16px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                            <strong style="color:white; font-size:15px;">Binance API</strong>
+                            <span id="binanceKeyBadge" style="font-size:11px; background:#1e293b; color:#94a3b8; padding:3px 8px; border-radius:12px;">Not Configured</span>
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <label style="display:block; color:#94a3b8; font-size:11px; font-weight:600; margin-bottom:4px;">API KEY</label>
+                            <input type="text" id="binanceApiKey" placeholder="Enter Binance API Key" style="width:100%; background:#111a2b; border:1px solid #202e45; color:white; padding:8px 10px; border-radius:6px; font-size:12px;">
+                        </div>
+                        <div style="margin-bottom:12px;">
+                            <label style="display:block; color:#94a3b8; font-size:11px; font-weight:600; margin-bottom:4px;">API SECRET</label>
+                            <input type="password" id="binanceApiSecret" placeholder="Enter API Secret" style="width:100%; background:#111a2b; border:1px solid #202e45; color:white; padding:8px 10px; border-radius:6px; font-size:12px;">
+                        </div>
+                        <div style="display:flex; gap:8px;">
+                            <button type="button" onclick="saveApiKey('Binance')" style="flex:1; background:#2563eb; border:none; color:white; padding:8px; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer;">💾 Save Key</button>
+                            <button type="button" onclick="testApiConnection('Binance')" style="background:#1e293b; border:1px solid #334155; color:#cbd5e1; padding:8px 12px; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer;">⚡ Test</button>
+                        </div>
+                        <div id="binanceKeyMsg" style="margin-top:10px; font-size:11px; color:#94a3b8;"></div>
+                    </div>
+
+                    <!-- BYBIT -->
+                    <div class="key-card" style="background:#0c1526; border:1px solid #202e45; border-radius:12px; padding:16px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                            <strong style="color:white; font-size:15px;">Bybit API</strong>
+                            <span id="bybitKeyBadge" style="font-size:11px; background:#1e293b; color:#94a3b8; padding:3px 8px; border-radius:12px;">Not Configured</span>
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <label style="display:block; color:#94a3b8; font-size:11px; font-weight:600; margin-bottom:4px;">API KEY</label>
+                            <input type="text" id="bybitApiKey" placeholder="Enter Bybit API Key" style="width:100%; background:#111a2b; border:1px solid #202e45; color:white; padding:8px 10px; border-radius:6px; font-size:12px;">
+                        </div>
+                        <div style="margin-bottom:12px;">
+                            <label style="display:block; color:#94a3b8; font-size:11px; font-weight:600; margin-bottom:4px;">API SECRET</label>
+                            <input type="password" id="bybitApiSecret" placeholder="Enter API Secret" style="width:100%; background:#111a2b; border:1px solid #202e45; color:white; padding:8px 10px; border-radius:6px; font-size:12px;">
+                        </div>
+                        <div style="display:flex; gap:8px;">
+                            <button type="button" onclick="saveApiKey('Bybit')" style="flex:1; background:#2563eb; border:none; color:white; padding:8px; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer;">💾 Save Key</button>
+                            <button type="button" onclick="testApiConnection('Bybit')" style="background:#1e293b; border:1px solid #334155; color:#cbd5e1; padding:8px 12px; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer;">⚡ Test</button>
+                        </div>
+                        <div id="bybitKeyMsg" style="margin-top:10px; font-size:11px; color:#94a3b8;"></div>
+                    </div>
+
+                    <!-- COINBASE -->
+                    <div class="key-card" style="background:#0c1526; border:1px solid #202e45; border-radius:12px; padding:16px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                            <strong style="color:white; font-size:15px;">Coinbase API</strong>
+                            <span id="coinbaseKeyBadge" style="font-size:11px; background:#1e293b; color:#94a3b8; padding:3px 8px; border-radius:12px;">Not Configured</span>
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <label style="display:block; color:#94a3b8; font-size:11px; font-weight:600; margin-bottom:4px;">API KEY</label>
+                            <input type="text" id="coinbaseApiKey" placeholder="Enter Coinbase API Key" style="width:100%; background:#111a2b; border:1px solid #202e45; color:white; padding:8px 10px; border-radius:6px; font-size:12px;">
+                        </div>
+                        <div style="margin-bottom:12px;">
+                            <label style="display:block; color:#94a3b8; font-size:11px; font-weight:600; margin-bottom:4px;">API SECRET</label>
+                            <input type="password" id="coinbaseApiSecret" placeholder="Enter API Secret" style="width:100%; background:#111a2b; border:1px solid #202e45; color:white; padding:8px 10px; border-radius:6px; font-size:12px;">
+                        </div>
+                        <div style="display:flex; gap:8px;">
+                            <button type="button" onclick="saveApiKey('Coinbase')" style="flex:1; background:#2563eb; border:none; color:white; padding:8px; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer;">💾 Save Key</button>
+                            <button type="button" onclick="testApiConnection('Coinbase')" style="background:#1e293b; border:1px solid #334155; color:#cbd5e1; padding:8px 12px; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer;">⚡ Test</button>
+                        </div>
+                        <div id="coinbaseKeyMsg" style="margin-top:10px; font-size:11px; color:#94a3b8;"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SAVE SECTION -->
+        <section class="save-panel" style="margin-top:24px;">
+            <div>
+                <div class="save-title">
+                    <span class="save-icon">⚙</span>
+                    <div>
+                        <h2>Bot Configuration</h2>
+                        <p id="saveMessage">Changes will apply immediately to execution engine.</p>
+                    </div>
+                </div>
+            </div>
+            <button type="button" class="save-button" id="saveSettingsBtn" onclick="saveBotSettings()">
+                <span>💾</span> Save Settings
+            </button>
+        </section>
+
+        <!-- LIVE CONFIGURATION SUMMARY PANEL -->
+        <section class="config-panel" style="margin-top:24px; background:#0c1526; border:1px solid #202e45; border-radius:12px; padding:20px;">
+            <div class="config-header" style="margin-bottom:16px;">
+                <h2 style="color:white; font-size:18px;">Live Bot Configuration Summary</h2>
+                <p style="color:#64748b; font-size:13px;">Real-time active parameter values currently running in execution engine</p>
+            </div>
+            <div class="config-items" style="display:grid; grid-template-columns: repeat(4, 1fr); gap:16px;">
+                <div class="config-item" style="background:#111a2b; padding:14px; border-radius:8px; border:1px solid #1e293b;">
+                    <span style="color:#94a3b8; font-size:12px; display:block; margin-bottom:4px;">Auto Trading Status</span>
+                    <strong id="currentAutoTrade" style="font-size:15px; color:#22c55e;">ENABLED</strong>
+                </div>
+                <div class="config-item" style="background:#111a2b; padding:14px; border-radius:8px; border:1px solid #1e293b;">
+                    <span style="color:#94a3b8; font-size:12px; display:block; margin-bottom:4px;">Minimum Profit Threshold</span>
+                    <strong id="currentMinProfit" style="font-size:15px; color:white;">$0.50 USDT</strong>
+                </div>
+                <div class="config-item" style="background:#111a2b; padding:14px; border-radius:8px; border:1px solid #1e293b;">
+                    <span style="color:#94a3b8; font-size:12px; display:block; margin-bottom:4px;">Trading Environment</span>
+                    <strong id="currentTradingMode" style="font-size:15px; color:#3b82f6;">Realistic Sim</strong>
+                </div>
+                <div class="config-item" style="background:#111a2b; padding:14px; border-radius:8px; border:1px solid #1e293b;">
+                    <span style="color:#94a3b8; font-size:12px; display:block; margin-bottom:4px;">Active Pair Symbol</span>
+                    <strong id="currentSymbol" style="font-size:15px; color:#eab308;">BTC / USDT</strong>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- FOOTER -->
+    <footer>
+        Crypto Arbitrage Bot • Real Trading Mode (LIVE)
+    </footer>
+
+</main>
+
+
+<!-- STEP-BY-STEP EXECUTION MODAL -->
+<div id="execModalOverlay">
+    <div class="exec-modal">
+        <h3 id="execModalTitle" style="color:white; font-size:20px; margin-bottom:6px;">⚡ Executing Realistic Trade...</h3>
+        <p id="execModalSub" style="color:#64748b; font-size:13px; margin-bottom:24px;">Routing order through CCXT exchange engine</p>
+
+        <div id="stepsContainer">
+            <div class="step-item" id="step1">
+                <div class="step-icon" id="step1Icon">1</div>
+                <div>
+                    <strong style="color:white; font-size:14px;" id="step1Title">Submitting BUY Order</strong>
+                    <div style="color:#94a3b8; font-size:12px; margin-top:2px;" id="step1Detail">Placing Buy order...</div>
+                </div>
+            </div>
+
+            <div class="step-item" id="step2">
+                <div class="step-icon" id="step2Icon">2</div>
+                <div>
+                    <strong style="color:white; font-size:14px;" id="step2Title">Transferring Asset</strong>
+                    <div style="color:#94a3b8; font-size:12px; margin-top:2px;" id="step2Detail">Awaiting network confirmation...</div>
+                </div>
+            </div>
+
+            <div class="step-item" id="step3">
+                <div class="step-icon" id="step3Icon">3</div>
+                <div>
+                    <strong style="color:white; font-size:14px;" id="step3Title">Executing SELL Order</strong>
+                    <div style="color:#94a3b8; font-size:12px; margin-top:2px;" id="step3Detail">Submitting Sell order...</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="modalSummaryBox" style="display:none; background:#0c1526; border:1px solid #202e45; border-radius:12px; padding:16px; margin-top:15px;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                <span style="color:#64748b; font-size:13px;">Executed Quantity:</span>
+                <strong style="color:white; font-size:13px;" id="sumBtc">-- BTC</strong>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                <span style="color:#64748b; font-size:13px;">Estimated Slippage:</span>
+                <strong style="color:#eab308; font-size:13px;" id="sumSlip">0.05%</strong>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                <span style="color:#64748b; font-size:13px;">Total Fees:</span>
+                <strong style="color:#94a3b8; font-size:13px;" id="sumFees">-- USDT</strong>
+            </div>
+            <div style="display:flex; justify-content:space-between; border-top:1px solid #1e293b; padding-top:8px; margin-top:8px;">
+                <span style="color:#64748b; font-weight:600; font-size:14px;">Net Realized Profit:</span>
+                <strong style="color:#22c55e; font-weight:bold; font-size:16px;" id="sumProfit">+0.00 USDT</strong>
+            </div>
+        </div>
+
+        <button id="modalCloseBtn" onclick="closeExecModal()" style="display:none; width:100%; margin-top:20px; padding:12px; background:#22c55e; border:none; border-radius:8px; color:white; font-weight:600; cursor:pointer;">
+            Done & View History →
+        </button>
+    </div>
+</div>
+
+
+<!-- JAVASCRIPT LOGIC -->
+<script>
+
+/* =====================================================
+   SPA TAB NAVIGATION (ZERO PAGE RELOADS)
+===================================================== */
+const tabTitles = {
+    dashboard: { title: "Dashboard", subtitle: "Crypto Arbitrage Bot Overview" },
+    prices: { title: "Live Prices", subtitle: "Real-time BTC / USDT exchange price comparison" },
+    arbitrage: { title: "Arbitrage Engine", subtitle: "Real-time spread analysis & order execution" },
+    trades: { title: "Trade History & Audit", subtitle: "Complete log of executed real trades & order IDs" },
+    settings: { title: "Settings", subtitle: "Configure automated trading engine & exchange API keys" }
+};
+
+function switchTab(event_or_null, tabId) {
+    if (event_or_null) {
+        event_or_null.preventDefault();
+    }
+
+    if (!tabTitles[tabId]) tabId = 'dashboard';
+
+    // 1. Hide all tab views, show selected
+    document.querySelectorAll('.tab-view').forEach(view => view.classList.remove('active'));
+    const targetView = document.getElementById(`view-${tabId}`);
+    if (targetView) targetView.classList.add('active');
+
+    // 2. Update active nav link
+    document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
+    const targetNav = document.getElementById(`nav-${tabId}`);
+    if (targetNav) targetNav.classList.add('active');
+
+    // 3. Update header titles
+    document.getElementById('pageTitle').innerText = tabTitles[tabId].title;
+    document.getElementById('pageSubtitle').innerText = tabTitles[tabId].subtitle;
+
+    // 4. Update browser URL without re-triggering page load
+    window.history.pushState({ tab: tabId }, "", "/" + (tabId === 'dashboard' ? '' : tabId));
+
+    // 5. Trigger tab specific refreshes
+    if (tabId === 'trades') loadTradeHistoryTable();
+    if (tabId === 'settings') { loadSettings(); loadApiKeys(); }
+}
+
+window.addEventListener('popstate', (event) => {
+    const path = window.location.pathname.replace('/', '') || 'dashboard';
+    switchTab(null, path);
+});
+
+
+/* =====================================================
+   CLOCK
+===================================================== */
+function updateTime() {
+    document.getElementById("time").innerText = new Date().toLocaleTimeString();
+}
+updateTime();
+setInterval(updateTime, 1000);
+
+
+/* =====================================================
+   GLOBAL MARKET DATA & AUTO REFRESH
+===================================================== */
+let lastPopupTradeKey = null;
+let selectedTradeSize = 500;
+
+function selectTradeSize(size, element) {
+    selectedTradeSize = size;
+    document.querySelectorAll('.size-btn').forEach(btn => btn.classList.remove('active'));
+    if (element) element.classList.add('active');
+    document.getElementById('customTradeSize').value = '';
+}
+
+function onCustomSizeInput(val) {
+    const parsed = parseFloat(val);
+    if (parsed > 0) {
+        selectedTradeSize = parsed;
+        document.querySelectorAll('.size-btn').forEach(btn => btn.classList.remove('active'));
+    }
+}
+
+async function loadMarketData() {
+    try {
+        const response = await fetch("/api/market");
+        const result = await response.json();
+        updateUIWithMarketData(result);
+    } catch (e) {
+        console.error("Market data load error:", e);
+    }
+}
+
+function updateUIWithMarketData(result) {
+    if (!result || !result.success) return;
+    const data = result.data;
+    if (!data) return;
+
+    // Dashboard values
+    document.getElementById("buyExchange").innerText = data.buy_exchange || "--";
+    document.getElementById("buyPrice").innerText = Number(data.buy_price || 0).toFixed(2) + " USDT";
+    document.getElementById("sellExchange").innerText = data.sell_exchange || "--";
+    document.getElementById("sellPrice").innerText = Number(data.sell_price || 0).toFixed(2) + " USDT";
+    document.getElementById("netProfit").innerText = Number(data.net_profit || 0).toFixed(2) + " USDT";
+
+    const opp = document.getElementById("opportunity");
+    if (Number(data.net_profit) > 0) {
+        opp.innerText = "🟢 Opportunity Found";
+    } else {
+        opp.innerText = "No Opportunity";
+    }
+
+    // Live Prices tab
+    if (data.prices) {
+        if (data.prices.Binance) document.getElementById("binance").innerText = Number(data.prices.Binance).toFixed(2);
+        if (data.prices.Bybit) document.getElementById("bybit").innerText = Number(data.prices.Bybit).toFixed(2);
+        if (data.prices.Coinbase || data.prices.Kraken) {
+            document.getElementById("coinbase").innerText = Number(data.prices.Coinbase || data.prices.Kraken).toFixed(2);
+        }
+    }
+
+    // Arbitrage tab
+    document.getElementById("arbBuy").innerText = data.buy_exchange || "--";
+    document.getElementById("arbBuyPrice").innerText = Number(data.buy_price || 0).toFixed(2) + " USDT";
+    document.getElementById("arbSell").innerText = data.sell_exchange || "--";
+    document.getElementById("arbSellPrice").innerText = Number(data.sell_price || 0).toFixed(2) + " USDT";
+    document.getElementById("arbDifference").innerText = Number(data.difference || 0).toFixed(2) + " USDT";
+    document.getElementById("arbNetProfit").innerText = Number(data.net_profit || 0).toFixed(2) + " USDT";
+
+    const oppBadge = document.getElementById("oppBadge");
+    if (Number(data.net_profit) >= (data.minimum_profit || 0.5)) {
+        oppBadge.innerText = "🟢 Profitable Opportunity";
+        oppBadge.style.background = "#132b20"; oppBadge.style.color = "#22c55e";
+    } else {
+        oppBadge.innerText = "🟡 Low Spread Opportunity";
+        oppBadge.style.background = "#2b2313"; oppBadge.style.color = "#eab308";
+    }
+
+    // Summary Cards & Wallet Balances
+    if (result.summary) {
+        document.getElementById("balance").innerText = Number(result.summary.balance !== undefined && result.summary.balance !== null ? result.summary.balance : 0.00).toFixed(2);
+        document.getElementById("profit").innerText = Number(result.summary.profit || 0).toFixed(2);
+        document.getElementById("trades").innerText = result.summary.trades || 0;
+
+        if (result.summary.portfolio) {
+            const p = result.summary.portfolio;
+            const status = result.summary.wallet_status || {};
+
+            document.getElementById("binanceUsdt").innerText = "$" + Number(p.binance_usdt || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " USDT";
+            document.getElementById("bybitUsdt").innerText = "$" + Number(p.bybit_usdt || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " USDT";
+            document.getElementById("coinbaseUsdt").innerText = "$" + Number(p.coinbase_usdt || p.kraken_usdt || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " USDT";
+
+            document.getElementById("binanceBtc").innerText = Number(p.binance_btc || 0).toFixed(8) + " BTC";
+            document.getElementById("bybitBtc").innerText = Number(p.bybit_btc || 0).toFixed(8) + " BTC";
+            document.getElementById("coinbaseBtc").innerText = Number(p.coinbase_btc || p.kraken_btc || 0).toFixed(8) + " BTC";
+
+            const updateWalletStatus = (elementId, exchangeStatus) => {
+                const element = document.getElementById(elementId);
+                if (!element) return;
+
+                if (exchangeStatus && exchangeStatus.connected) {
+                    element.innerText = "● Connected";
+                    element.style.color = "#22c55e";
+                    element.title = "Real balance loaded";
+                } else {
+                    element.innerText = "● Not connected";
+                    element.style.color = "#ef4444";
+                    element.title = (exchangeStatus && exchangeStatus.error)
+                        ? exchangeStatus.error
+                        : "API key is missing or the exchange could not be reached.";
+                }
+            };
+
+            updateWalletStatus("binanceStatus", status.Binance);
+            updateWalletStatus("bybitStatus", status.Bybit);
+            updateWalletStatus("coinbaseStatus", status.Coinbase);
+
+            const updated = document.getElementById("walletLastUpdated");
+            if (updated) {
+                updated.innerText = "Updated " + new Date().toLocaleTimeString();
+            }
+        }
+    }
+
+    if (result.settings) {
+        if (result.settings.trading_mode) {
+            const badge = document.getElementById("tradingModeBadge");
+            if (badge) {
+                badge.innerText = result.settings.trading_mode === "LIVE" ? "● LIVE MODE" : "● Realistic Sim";
+            }
+        }
+        if (result.settings.auto_trade !== undefined) {
+            updateAutoTradeUI(result.settings.auto_trade);
+        }
+    }
+
+    checkAutoTradePopup(result);
+
+    const tradesTab = document.getElementById("view-trades");
+    if (tradesTab && tradesTab.classList.contains("active")) {
+        loadTradeHistoryTable();
+    }
+}
+
+
+/* =====================================================
+   AUTO TRADE NOTIFICATIONS & POPUP
+===================================================== */
+
+function requestNotificationPermission() {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") {
+        try {
+            Notification.requestPermission();
+        } catch(e) {}
+    }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    requestNotificationPermission();
+});
+window.addEventListener("load", () => {
+    requestNotificationPermission();
+});
+
+function playSuccessChime() {
+    // Sound disabled per user preference
+}
+
+function triggerDesktopNotification(trade) {
+    if ("Notification" in window && Notification.permission === "granted") {
+        const buyEx = trade.buy || trade.buy_exchange || "Exchange";
+        const sellEx = trade.sell || trade.sell_exchange || "Exchange";
+        const profit = Number(trade.profit || 0).toFixed(2);
+        
+        try {
+            const uniqueTag = "auto-trade-" + (trade.id || trade.buy_order_id || trade.created_at || Date.now());
+            new Notification("⚡ Auto Trade Executed & Saved!", {
+                body: `${buyEx} ➔ ${sellEx} | Profit: +$${profit} USDT`,
+                tag: uniqueTag,
+                renotify: true,
+                silent: true,
+                requireInteraction: false
+            });
+        } catch(e) {}
+    }
+}
+
+async function testNotificationAndTrade() {
+    try {
+        requestNotificationPermission(true);
+        playSuccessChime();
+
+        const response = await fetch("/api/trade", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ trade_amount: 1000 })
+        });
+        const result = await response.json();
+
+        if (result.success && result.trade) {
+            showAutoTradePopup(result.trade);
+            loadTradeHistoryTable();
+            loadMarketData();
+        } else {
+            alert(result.message || "Test trade failed");
+        }
+    } catch(e) {
+        console.error("Test trade error:", e);
+    }
+}
+
+function showAutoTradePopup(trade) {
+    playSuccessChime();
+    triggerDesktopNotification(trade);
+
+    const popup = document.getElementById("autoTradePopup");
+    if (!popup) return;
+
+    const buyExchange = trade.buy || trade.buy_exchange || "--";
+    const sellExchange = trade.sell || trade.sell_exchange || "--";
+    const buyPrice = Number(trade.buy_price || 0).toFixed(2);
+    const sellPrice = Number(trade.sell_price || 0).toFixed(2);
+    const fees = Number(trade.fees || 0).toFixed(2);
+    const profit = Number(trade.profit || 0).toFixed(2);
+
+    popup.innerHTML = `
+        <div class="auto-trade-popup">
+            <button class="popup-close" onclick="closeAutoTradePopup()">×</button>
+            <div class="popup-icon">🤖</div>
+            <h2>Automatic Trade Executed</h2>
+            <p class="popup-success">🟢 Real Buy + Real Sell completed</p>
+            <div class="popup-trade-info">
+                <div class="popup-row"><span>Buy From</span><strong>${buyExchange}</strong></div>
+                <div class="popup-row"><span>Buy Price</span><strong>${buyPrice} USDT</strong></div>
+                <div class="popup-row"><span>Sell On</span><strong>${sellExchange}</strong></div>
+                <div class="popup-row"><span>Sell Price</span><strong>${sellPrice} USDT</strong></div>
+                <div class="popup-row"><span>Fees</span><strong>${fees} USDT</strong></div>
+                <div class="popup-row popup-profit"><span>Net Profit</span><strong>+${profit} USDT</strong></div>
+            </div>
+            <div class="popup-footer">Automatic real trading is active</div>
+        </div>
+    `;
+
+    popup.classList.add("popup-show");
+    setTimeout(closeAutoTradePopup, 6000);
+}
+
+function closeAutoTradePopup() {
+    const popup = document.getElementById("autoTradePopup");
+    if (popup) popup.classList.remove("popup-show");
+}
+
+function checkAutoTradePopup(market) {
+    // If Auto Trade is OFF in settings, do NOT trigger any automatic trade notifications
+    if (!market.settings || !market.settings.auto_trade) return;
+
+    if (!market.auto_trade || !market.auto_trade.success) return;
+    const trade = market.auto_trade.trade;
+    if (!trade) return;
+
+    const tradeKey = `trade_${trade.id || trade.buy_order_id || trade.created_at || ''}_${trade.profit || ''}`;
+    
+    // On initial page load, store initial trade key so past historical trades don't popup on load
+    if (lastPopupTradeKey === null) {
+        lastPopupTradeKey = tradeKey;
+        return;
+    }
+
+    if (tradeKey === lastPopupTradeKey) return;
+    lastPopupTradeKey = tradeKey;
+    
+    showAutoTradePopup(trade);
+
+    // Refresh trade log table if active
+    loadTradeHistoryTable();
+}
+
+
+/* =====================================================
+   TRADE EXECUTION & MODAL
+===================================================== */
+function resetExecModal() {
+    document.getElementById("execModalTitle").innerText = "⚡ Executing Realistic Trade...";
+    document.getElementById("execModalSub").innerText = "Routing order through exchange execution engine";
+
+    for (let i = 1; i <= 3; i++) {
+        const step = document.getElementById(`step${i}`);
+        const icon = document.getElementById(`step${i}Icon`);
+        step.classList.remove("active", "completed");
+        icon.innerHTML = i;
+    }
+    document.getElementById("modalSummaryBox").style.display = "none";
+    document.getElementById("modalCloseBtn").style.display = "none";
+}
+
+function showStep(stepNum, titleText, detailText, isDone = false) {
+    const step = document.getElementById(`step${stepNum}`);
+    const icon = document.getElementById(`step${stepNum}Icon`);
+
+    step.classList.add("active");
+    if (titleText) document.getElementById(`step${stepNum}Title`).innerText = titleText;
+    if (detailText) document.getElementById(`step${stepNum}Detail`).innerText = detailText;
+
+    if (isDone) {
+        step.classList.add("completed");
+        icon.innerHTML = "✓";
+    } else {
+        icon.innerHTML = `<div class="pulse-loader"></div>`;
+    }
+}
+
+function closeExecModal() {
+    document.getElementById("execModalOverlay").style.display = "none";
+    switchTab(null, "trades");
+}
+
+async function executeTrade() {
+    const button = document.getElementById("tradeButton");
+    const message = document.getElementById("message");
+
+    button.disabled = true;
+    message.innerText = "";
+
+    resetExecModal();
+    document.getElementById("execModalOverlay").style.display = "flex";
+
+    showStep(1, "Submitting BUY Order", `Placing buy order for $${selectedTradeSize} USDT...`, false);
+
+    try {
+        const response = await fetch("/api/trade", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ trade_amount: selectedTradeSize })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            const trade = result.trade;
+
+            showStep(1, `BUY Order Filled (${trade.buy})`, `Order ID: ${trade.buy_order_id} | Price: $${trade.effective_buy_price}`, true);
+
+            await new Promise(r => setTimeout(r, 400));
+            showStep(2, `Cross-Exchange Transfer`, `Transferring ${trade.btc_amount} BTC -> ${trade.sell}`, true);
+
+            await new Promise(r => setTimeout(r, 400));
+            showStep(3, `SELL Order Filled (${trade.sell})`, `Order ID: ${trade.sell_order_id} | Price: $${trade.effective_sell_price}`, true);
+
+            document.getElementById("execModalTitle").innerText = "🎉 Trade Execution Completed!";
+            document.getElementById("execModalSub").innerText = "Orders matched and saved to persistent database.";
+
+            document.getElementById("sumBtc").innerText = `${trade.btc_amount} BTC`;
+            document.getElementById("sumSlip").innerText = `${trade.slippage}%`;
+            document.getElementById("sumFees").innerText = `$${trade.fees} USDT`;
+            document.getElementById("sumProfit").innerText = `+${trade.profit} USDT`;
+
+            document.getElementById("modalSummaryBox").style.display = "block";
+            document.getElementById("modalCloseBtn").style.display = "block";
+
+            loadMarketData();
+
+        } else {
+            document.getElementById("execModalOverlay").style.display = "none";
+            message.style.color = "#ef4444";
+            message.innerText = "❌ " + (result.message || "Trade execution failed.");
+        }
+
+    } catch (error) {
+        console.error(error);
+        document.getElementById("execModalOverlay").style.display = "none";
+        message.style.color = "#ef4444";
+        message.innerText = "❌ Network error. Unable to execute trade.";
+    }
+
+    button.disabled = false;
+}
+
+
+/* =====================================================
+   TRADE HISTORY TABLE
+===================================================== */
+function formatTradeTime(dateStr) {
+    if (!dateStr) return '--';
+    try {
+        let str = String(dateStr).trim();
+        let isoStr = str.includes('T') ? str : str.replace(' ', 'T');
+
+        // Check if string has explicit timezone offset (+05:30, Z, etc.)
+        let hasOffset = str.includes('Z') || str.includes('+') || (str.includes('-') && str.lastIndexOf('-') > 10);
+        if (!hasOffset) {
+            // Append Z so UTC timestamp strings stored in DB are converted to local browser time
+            isoStr += 'Z';
+        }
+
+        let d = new Date(isoStr);
+        if (isNaN(d.getTime())) {
+            d = new Date(str);
+        }
+        if (isNaN(d.getTime())) return str;
+
+        const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+        const datePart = d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+        return `<span style="color:#cbd5e1; font-weight:600; white-space:nowrap;">${timeStr}</span><br><small style="color:#64748b; font-size:11px; white-space:nowrap;">${datePart}</small>`;
+    } catch (e) {
+        return dateStr;
+    }
+}
+
+async function loadTradeHistoryTable(isManualClick = false) {
+    const btn = document.getElementById("refreshLogBtn");
+    if (isManualClick && btn) {
+        btn.innerText = "⏳ Refreshing...";
+        btn.disabled = true;
+    }
+
+    try {
+        const response = await fetch("/api/trades");
+        const result = await response.json();
+        if (!result.success) return;
+
+        const table = document.getElementById("tradeTable");
+        if (!table) return;
+        table.innerHTML = "";
+
+        if (!result.trades || result.trades.length === 0) {
+            table.innerHTML = `
+                <tr>
+                    <td colspan="10" style="text-align:center; padding:40px; color:#94a3b8;">
+                        No real trades executed yet. Run an arbitrage trade or turn on Auto Trade.
+                    </td>
+                </tr>
+            `;
+        } else {
+            result.trades.forEach(trade => {
+                const row = document.createElement("tr");
+                const profit = Number(trade.profit);
+                const isPos = profit >= 0;
+
+                const buyEx = trade.buy_exchange || trade.buy || "--";
+                const sellEx = trade.sell_exchange || trade.sell || "--";
+                const buyId = trade.buy_order_id || 'ORD-BUY-AUTO';
+                const sellId = trade.sell_order_id || 'ORD-SEL-AUTO';
+                const btcAmt = Number(trade.btc_amount || (1000 / (trade.buy_price || 1))).toFixed(4);
+                const sizeUsdt = Number(trade.trade_amount || 1000).toFixed(0);
+                const slipPct = Number(trade.slippage || 0.05).toFixed(2);
+
+                const isLive = String(trade.mode || '').toUpperCase() === "LIVE";
+                const modeBadge = isLive 
+                    ? `<span style="font-size:10px; font-weight:700; background:#3f0f15; color:#ef4444; border:1px solid #7f1d1d; padding:2px 6px; border-radius:4px; display:inline-block; margin-bottom:4px;">🔴 REAL LIVE</span>`
+                    : `<span style="font-size:10px; font-weight:700; background:#1e293b; color:#94a3b8; border:1px solid #334155; padding:2px 6px; border-radius:4px; display:inline-block; margin-bottom:4px;">📄 PAPER</span>`;
+
+
+
+                row.innerHTML = `
+                    <td>
+                        ${modeBadge}
+                        <span style="font-family:monospace; font-size:11px; background:#0c1526; padding:3px 6px; border-radius:4px; color:#3b82f6; display:block;">${buyId}</span>
+                        <span style="font-family:monospace; font-size:11px; background:#0c1526; padding:3px 6px; border-radius:4px; color:#eab308; display:block; margin-top:2px;">${sellId}</span>
+                    </td>
+                    <td>
+                        <strong style="color:#22c55e;">${buyEx}</strong>
+                        <span style="color:#64748b; margin:0 4px;">➔</span>
+                        <strong style="color:#ef4444;">${sellEx}</strong>
+                    </td>
+                    <td>$${Number(trade.buy_price).toFixed(2)}</td>
+                    <td>$${Number(trade.sell_price).toFixed(2)}</td>
+                    <td style="font-weight:600; color:#f8fafc;">${btcAmt} BTC</td>
+                    <td>$${sizeUsdt}</td>
+                    <td style="color:#eab308; font-size:13px;">${slipPct}%</td>
+                    <td>$${Number(trade.fees).toFixed(2)}</td>
+                    <td class="${isPos ? 'profit-positive' : 'profit-negative'}">${isPos ? '+' : ''}$${profit.toFixed(2)} USDT</td>
+                    <td>${formatTradeTime(trade.created_at)}</td>
+                `;
+
+                table.appendChild(row);
+            });
+        }
+
+        if (isManualClick && btn) {
+            const count = (result.trades || []).length;
+            btn.innerText = `✓ Refreshed (${count})`;
+            setTimeout(() => {
+                btn.innerText = "🔄 Refresh Log";
+                btn.disabled = false;
+            }, 1500);
+        }
+
+    } catch (e) {
+        console.error("Trade history error:", e);
+        if (isManualClick && btn) {
+            btn.innerText = "❌ Error";
+            setTimeout(() => {
+                btn.innerText = "🔄 Refresh Log";
+                btn.disabled = false;
+            }, 1500);
+        }
+    }
+}
+
+async function clearTradeHistory() {
+    if (!confirm("Are you sure you want to clear all executed trade log history?")) return;
+    try {
+        const response = await fetch("/api/trades/clear", { method: "POST" });
+        const result = await response.json();
+        if (result.success) {
+            loadTradeHistoryTable();
+            loadMarketData();
+        }
+    } catch (e) {
+        console.error("Clear trades error:", e);
+    }
+}
+
+
+/* =====================================================
+   SETTINGS & API KEYS
+===================================================== */
+async function loadSettings() {
+    try {
+        const response = await fetch("/api/settings");
+        const result = await response.json();
+        if (!result.success) return;
+
+        const s = result.settings;
+        document.getElementById("autoTrade").checked = Boolean(s.auto_trade);
+        document.getElementById("minProfit").value = s.min_profit;
+        if (document.getElementById("autoCooldown")) document.getElementById("autoCooldown").value = s.cooldown || 30;
+        if (document.getElementById("tradingModeSelect")) document.getElementById("tradingModeSelect").value = s.trading_mode || "LIVE";
+        if (document.getElementById("tradingSymbolSelect")) document.getElementById("tradingSymbolSelect").value = s.symbol || "BTC/USDT";
+        if (document.getElementById("tradeAmount")) document.getElementById("tradeAmount").value = s.trade_amount || 1000;
+        const slipToggle = document.getElementById("slippageToggle");
+        if (slipToggle && document.activeElement !== slipToggle) {
+            slipToggle.checked = s.slippage_enabled !== false;
+        }
+
+        updateAutoTradeUI(s.auto_trade);
+        updateCurrentConfiguration(s);
+    } catch (e) {
+        console.error("Settings load error:", e);
+    }
+}
+
+async function toggleSlippageSim(enabled) {
+    try {
+        const response = await fetch("/api/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ slippage_enabled: Boolean(enabled) })
+        });
+        const result = await response.json();
+        if (result.success && result.settings) {
+            console.log("Slippage SIM updated:", result.settings.slippage_enabled);
+        }
+    } catch (e) {
+        console.error("Failed to toggle Slippage SIM:", e);
+    }
+}
+
+function updateCurrentConfiguration(s) {
+    const autoTradeElem = document.getElementById("currentAutoTrade");
+    const minProfitElem = document.getElementById("currentMinProfit");
+    const modeElem = document.getElementById("currentTradingMode");
+    const symbolElem = document.getElementById("currentSymbol");
+
+    if (autoTradeElem) {
+        autoTradeElem.innerText = s.auto_trade ? "ENABLED 🟢" : "DISABLED 🔴";
+        autoTradeElem.style.color = s.auto_trade ? "#22c55e" : "#ef4444";
+    }
+    if (minProfitElem) {
+        minProfitElem.innerText = "$" + Number(s.min_profit || 0.5).toFixed(2) + " USDT";
+    }
+    if (modeElem) {
+        modeElem.innerText = s.trading_mode === "TESTNET" ? "Testnet Sandbox" : "Live Real Trading Mode";
+        modeElem.style.color = s.trading_mode === "TESTNET" ? "#eab308" : "#ef4444";
+    }
+    if (symbolElem) {
+        symbolElem.innerText = s.symbol || "BTC / USDT";
+    }
+}
+
+function updateAutoTradeUI(enabled) {
+    const text = document.getElementById("autoStatusText");
+    const desc = document.getElementById("autoTradeDescription");
+    const dot = document.getElementById("autoStatusDot");
+
+    const headerToggle = document.getElementById("headerAutoTradeToggle");
+    const headerBadge = document.getElementById("headerAutoTradeBadge");
+    const settingsToggle = document.getElementById("autoTrade");
+
+    if (headerToggle && document.activeElement !== headerToggle) headerToggle.checked = enabled;
+    if (settingsToggle && document.activeElement !== settingsToggle) settingsToggle.checked = enabled;
+
+    if (headerBadge) {
+        headerBadge.innerText = enabled ? "ON 🟢" : "OFF 🔴";
+        headerBadge.style.background = enabled ? "#132b20" : "#2b1313";
+        headerBadge.style.color = enabled ? "#22c55e" : "#ef4444";
+    }
+
+    if (enabled) {
+        if (text) text.innerText = "Automatic trading is ACTIVE";
+        if (desc) desc.innerText = "The bot can automatically execute profitable real trades.";
+        if (dot) dot.classList.add("active");
+    } else {
+        if (text) text.innerText = "Automatic trading is OFF";
+        if (desc) desc.innerText = "The bot will monitor opportunities but will not execute trades.";
+        if (dot) dot.classList.remove("active");
+    }
+}
+
+async function quickToggleAutoTrade(enabled) {
+    updateAutoTradeUI(enabled);
+    try {
+        const response = await fetch("/api/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ auto_trade: enabled })
+        });
+        const result = await response.json();
+        if (result.success) {
+            updateAutoTradeUI(result.settings.auto_trade);
+            updateCurrentConfiguration(result.settings);
+        }
+    } catch (e) {
+        console.error("Failed to toggle Auto Trade:", e);
+    }
+}
+
+async function saveBotSettings() {
+    const minProfitVal = Number(document.getElementById("minProfit").value);
+    const amountVal = Number(document.getElementById("tradeAmount") ? document.getElementById("tradeAmount").value : 1000);
+    const cooldownVal = Number(document.getElementById("autoCooldown") ? document.getElementById("autoCooldown").value : 30);
+    const slippagePctVal = Number(document.getElementById("slippagePct") ? document.getElementById("slippagePct").value : 0.05);
+    const autoChecked = document.getElementById("autoTrade").checked;
+    const modeVal = document.getElementById("tradingModeSelect") ? document.getElementById("tradingModeSelect").value : "PAPER";
+    const symbolVal = document.getElementById("tradingSymbolSelect") ? document.getElementById("tradingSymbolSelect").value : "BTC/USDT";
+    const slipChecked = document.getElementById("slippageToggle") ? document.getElementById("slippageToggle").checked : true;
+    const msg = document.getElementById("saveMessage");
+    const saveBtn = document.getElementById("saveSettingsBtn");
+
+    saveBtn.disabled = true;
+    saveBtn.innerText = "⏳ Saving...";
+
+    try {
+        const response = await fetch("/api/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                auto_trade: autoChecked,
+                min_profit: minProfitVal,
+                trade_amount: amountVal,
+                cooldown: cooldownVal,
+                slippage_pct: slippagePctVal,
+                slippage_enabled: slipChecked,
+                trading_mode: modeVal,
+                symbol: symbolVal
+            })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            updateAutoTradeUI(result.settings.auto_trade);
+            updateCurrentConfiguration(result.settings);
+            msg.innerText = "✅ All settings saved successfully!";
+            msg.style.color = "#22c55e";
+            saveBtn.innerText = "✓ Saved";
+            setTimeout(() => {
+                saveBtn.innerText = "💾 Save Settings";
+                msg.innerText = "Changes will apply immediately to execution engine.";
+                msg.style.color = "#94a3b8";
+            }, 2500);
+        } else {
+            msg.innerText = "❌ " + result.message;
+            msg.style.color = "#ef4444";
+        }
+    } catch (e) {
+        console.error(e);
+        msg.innerText = "❌ Failed to save settings.";
+        msg.style.color = "#ef4444";
+    }
+    saveBtn.disabled = false;
+}
+
+async function loadApiKeys() {
+    try {
+        const response = await fetch("/api/keys");
+        const result = await response.json();
+        if (!result.success) return;
+
+        const keys = result.keys || {};
+        ["Binance", "Bybit", "Coinbase"].forEach(ex => {
+            const badge = document.getElementById(`${ex.toLowerCase()}KeyBadge`);
+            const keyInfo = keys[ex] || keys[ex.toLowerCase()] || keys[ex.capitalize ? ex.capitalize() : ex];
+            if (badge && keyInfo) {
+                badge.innerText = "🔑 Key Active (" + keyInfo.api_key_masked + ")";
+                badge.style.background = "#132b20";
+                badge.style.color = "#22c55e";
+            } else if (badge) {
+                badge.innerText = "Not Configured";
+                badge.style.background = "#1e293b";
+                badge.style.color = "#94a3b8";
+            }
+        });
+
+    } catch (e) {
+        console.error("API Key load error:", e);
+    }
+}
+
+async function saveApiKey(exchange) {
+    const exLower = exchange.toLowerCase();
+    const apiKey = document.getElementById(`${exLower}ApiKey`).value.trim();
+    const apiSecret = document.getElementById(`${exLower}ApiSecret`).value.trim();
+    const msg = document.getElementById(`${exLower}KeyMsg`);
+
+    if (!apiKey || !apiSecret) {
+        msg.style.color = "#ef4444";
+        msg.innerText = "❌ API Key and Secret are required.";
+        return;
+    }
+
+    msg.style.color = "#eab308";
+    msg.innerText = "⏳ Saving...";
+
+    try {
+        const response = await fetch("/api/keys", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ exchange, api_key: apiKey, api_secret: apiSecret })
+        });
+        const result = await response.json();
+        if (result.success) {
+            msg.style.color = "#22c55e";
+            msg.innerText = "✅ Saved successfully!";
+            document.getElementById(`${exLower}ApiKey`).value = "";
+            document.getElementById(`${exLower}ApiSecret`).value = "";
+            loadApiKeys();
+        } else {
+            msg.style.color = "#ef4444";
+            msg.innerText = "❌ " + result.message;
+        }
+    } catch (e) {
+        msg.style.color = "#ef4444";
+        msg.innerText = "❌ Failed to save API Key.";
+    }
+}
+
+async function testApiConnection(exchange) {
+    const exLower = exchange.toLowerCase();
+    const apiKey = document.getElementById(`${exLower}ApiKey`) ? document.getElementById(`${exLower}ApiKey`).value.trim() : "";
+    const apiSecret = document.getElementById(`${exLower}ApiSecret`) ? document.getElementById(`${exLower}ApiSecret`).value.trim() : "";
+    const msg = document.getElementById(`${exLower}KeyMsg`);
+
+    msg.style.color = "#3b82f6";
+    msg.innerText = `⏳ Testing connection to ${exchange}...`;
+
+    try {
+        const response = await fetch("/api/keys/test", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ exchange, api_key: apiKey, api_secret: apiSecret })
+        });
+        const result = await response.json();
+        if (result.success) {
+            msg.style.color = "#22c55e";
+            msg.innerText = `🟢 Connected! Balance: $${result.usdt_balance} USDT | ${result.btc_balance} BTC`;
+            loadApiKeys();
+        } else {
+            msg.style.color = "#ef4444";
+            msg.innerText = result.message || "Connection failed.";
+        }
+    } catch (e) {
+        msg.style.color = "#ef4444";
+        msg.innerText = "❌ Network error during connection test.";
+    }
+}
+
+async function resetWallet() {
+    if (!confirm("Clear paper-trade history and paper balance? Your real exchange wallets will not be changed.")) return;
+    try {
+        const response = await fetch("/api/portfolio/reset", { method: "POST" });
+        const result = await response.json();
+        if (result.success) {
+            alert("✅ Paper-trade history and paper balance were reset. Real exchange wallets were not changed.");
+            loadMarketData();
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Failed to reset wallet.");
+    }
+}
+
+function resetWalletInSettings() {
+    resetWallet();
+}
+
+
+/* =====================================================
+   INITIALIZATION & CONTINUOUS AUTOMATIC POLLING
+===================================================== */
+const initialPath = window.location.pathname.replace('/', '') || 'dashboard';
+switchTab(null, initialPath);
+
+// Continuous background polling loop (runs 24/7 without page refresh)
+let isPollingRunning = false;
+
+async function startContinuousPolling() {
+    if (isPollingRunning) return;
+    isPollingRunning = true;
+
+    while (true) {
+        try {
+            await loadMarketData();
+        } catch (e) {
+            console.error("Auto-polling error:", e);
+        }
+        await new Promise(resolve => setTimeout(resolve, 2500));
+    }
+}
+
+// Initial fetch + continuous auto-polling
+loadMarketData();
+startContinuousPolling();
+
+// Re-sync instantly whenever user switches back to browser tab
+document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+        loadMarketData();
+    }
+});
+
+</script>
+</body>
+</html>
