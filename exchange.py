@@ -71,10 +71,6 @@ bybit_opts = {
 }
 
 
-coinbase_opts = {
-    "enableRateLimit": True,
-    "timeout": 20000
-}
 
 
 # ============================================================
@@ -85,8 +81,7 @@ if proxy_url:
 
     for opts in (
         binance_opts,
-        bybit_opts,
-        coinbase_opts
+        bybit_opts
     ):
 
         if "socks" in proxy_url.lower():
@@ -101,8 +96,7 @@ if proxy_url:
 
 exchanges = {
     "Binance": ccxt.binance(binance_opts),
-    "Bybit": ccxt.bybit(bybit_opts),
-    "Coinbase": ccxt.coinbase(coinbase_opts)
+    "Bybit": ccxt.bybit(bybit_opts)
 }
 
 
@@ -195,15 +189,6 @@ def get_authenticated_exchange(name):
             config_opts["options"]["defaultType"] = "spot"
 
 
-        # ----------------------------------------------------
-        # COINBASE
-        # ----------------------------------------------------
-
-        if name.lower() == "coinbase":
-
-            config_opts["options"] = {
-                "defaultType": "spot"
-            }
 
 
         # ----------------------------------------------------
@@ -308,8 +293,7 @@ def get_actual_wallet_balances():
 
     exchange_names = [
         "Binance",
-        "Bybit",
-        "Coinbase"
+        "Bybit"
     ]
 
 
@@ -1013,7 +997,7 @@ def get_live_prices():
 
 
     with concurrent.futures.ThreadPoolExecutor(
-        max_workers=3
+        max_workers=2
     ) as executor:
 
         results = list(
@@ -1826,16 +1810,6 @@ if __name__ == "__main__":
             "No exchange prices available."
         )
 
-    else:
-
-        for exchange, price in prices.items():
-
-            print(
-                f"{exchange}: "
-                f"{price:.2f} USDT"
-            )
-
-
     print(
         "\n==============================\n"
     )
@@ -1864,13 +1838,6 @@ if __name__ == "__main__":
     )
 
 
-    print("\nCoinbase:")
-
-    print(
-        test_exchange_connection(
-            "Coinbase"
-        )
-    )
 
 
     print(

@@ -1,20 +1,35 @@
-from exchange import get_live_prices, execute_live_real_trade
-from paper_trade import PaperTrader
-from database import create_database, save_trade
+
+# ============================================================
+# REAL ARBITRAGE ENGINE
+# Binance + Bybit
+#
+# NO PAPER TRADING
+# NO SIMULATION
+# NO FAKE PROFIT
+# ============================================================
+
+import time
 
 import config
-import time
+
+from database import (
+    create_database,
+    save_trade,
+)
+
+from exchange import (
+    get_live_prices,
+    execute_live_real_trade,
+)
 
 
 # ============================================================
-# AUTO TRADE CONTROL
+# STATE
 # ============================================================
 
 last_trade_time = 0
 last_trade_key = None
 
-
-import random
 
 # ============================================================
 # ANALYZE MARKET
@@ -22,283 +37,965 @@ import random
 
 def analyze_market():
 
-    prices = get_live_prices()
+    try:
+        prices = get_live_prices()
+    except Exception as e:
 
-    if not prices or len(prices) < 2:
+        print(f"❌ Failed to fetch live prices: {e}")
+
         return None
 
-    # Lowest price = BUY
+    # --------------------------------------------------------
+    # Need at least 2 exchanges
+    # --------------------------------------------------------
+
+    if len(prices) < 2:
+        return None
+
+    # --------------------------------------------------------
+    # LOWEST PRICE = BUY
+    # HIGHEST PRICE = SELL
+    # --------------------------------------------------------
+
     buy_exchange = min(
         prices,
         key=prices.get
     )
 
-    # Highest price = SELL
     sell_exchange = max(
         prices,
         key=prices.get
     )
 
-    buy_price = prices[buy_exchange]
-    sell_price = prices[sell_exchange]
-
-    # Price difference
-    difference = sell_price - buy_price
-
-    # Total fees
-    total_fees = (
-        config.BUY_FEE
-        + config.SELL_FEE
-        + config.TRANSFER_FEE
+    buy_price = float(
+        prices[buy_exchange]
     )
 
-    # Net profit
-    net_profit = difference - total_fees
+    sell_price = float(
+        prices[sell_exchange]
+    )
 
-    # In PAPER simulation mode, ensure active trade opportunities occur for demonstration
-    trading_mode = getattr(config, "TRADING_MODE", "PAPER")
-    if trading_mode == "PAPER" and net_profit < getattr(config, "MIN_PROFIT", 0.01):
-        simulated_profit = round(random.uniform(0.35, 2.75), 2)
-        sell_price = round(buy_price + total_fees + simulated_profit, 2)
-        prices[sell_exchange] = sell_price
-        difference = round(sell_price - buy_price, 2)
-        net_profit = round(difference - total_fees, 2)
+    # --------------------------------------------------------
+    # BASIC VALIDATION
+    # --------------------------------------------------------
+
+    if buy_price <= 0 or sell_price <= 0:
+        return None
+
+    if sell_price <= buy_price:
+
+        difference = 0.0
+        spread_percent = 0.0
+
+    else:
+
+        difference = (
+            sell_price -
+            buy_price
+        )
+
+        spread_percent = (
+            difference /
+            buy_price *
+            100
+        )
+
+    # ========================================================
+    # TRADE AMOUNT
+    # ========================================================
+
+    trade_amount = float(
+        config.DEFAULT_TRADE_AMOUNT
+    )
+
+    # Never exceed configured maximum.
+    trade_amount = min(
+        trade_amount,
+        float(config.MAX_TRADE_AMOUNT_USDT)
+    )
+
+    # --------------------------------------------------------
+    # Minimum trade amount
+    # --------------------------------------------------------
+
+    if trade_amount < float(config.MIN_TRADE_USDT):
+
+        trade_amount = float(
+            config.MIN_TRADE_USDT
+        )
+
+    # ========================================================
+    # BTC AMOUNT
+    # ========================================================
+
+    btc_amount = (
+        trade_amount /
+        buy_price
+    )
+
+    # ========================================================
+    # ESTIMATED FEES
+    # ========================================================
+
+    fee_rate = (
+        float(config.ESTIMATED_FEE_PERCENT)
+        / 100
+    )
+
+    estimated_buy_cost = (
+        btc_amount *
+        buy_price
+    )
+
+    estimated_sell_value = (
+        btc_amount *
+        sell_price
+    )
+
+    estimated_buy_fee = (
+        estimated_buy_cost *
+        fee_rate
+    )
+
+    estimated_sell_fee = (
+        estimated_sell_value *
+        fee_rate
+    )
+
+    total_estimated_fees = (
+        estimated_buy_fee +
+        estimated_sell_fee
+    )
+
+    # ========================================================
+    # SLIPPAGE
+    # ========================================================
+
+    if config.SLIPPAGE_ENABLED:
+
+        slip_rate = (
+            float(config.SLIPPAGE_PCT)
+            / 100
+        )
+
+    else:
+
+        slip_rate = 0.0
+
+    # Worst case:
+    # BUY becomes more expensive
+    # SELL becomes cheaper
+
+    worst_buy_price = (
+        buy_price *
+        (1 + slip_rate)
+    )
+
+    worst_sell_price = (
+        sell_price *
+        (1 - slip_rate)
+    )
+
+    worst_buy_cost = (
+        btc_amount *
+        worst_buy_price
+    )
+
+    worst_sell_value = (
+        btc_amount *
+        worst_sell_price
+    )
+
+    worst_buy_fee = (
+        worst_buy_cost *
+        fee_rate
+    )
+
+    worst_sell_fee = (
+        worst_sell_value *
+        fee_rate
+    )
+
+    # ========================================================
+    # WORST CASE NET PROFIT
+    # ========================================================
+
+    worst_net_profit = (
+        worst_sell_value
+        - worst_buy_cost
+        - worst_buy_fee
+        - worst_sell_fee
+    )
+
+    # --------------------------------------------------------
+    # Net profit percentage
+    # --------------------------------------------------------
+
+    if worst_buy_cost > 0:
+
+        net_profit_percent = (
+            worst_net_profit /
+            worst_buy_cost *
+            100
+        )
+
+    else:
+
+        net_profit_percent = 0.0
+
+    # ========================================================
+    # PROFITABILITY CHECK
+    # ========================================================
+
+    profitable_by_usdt = (
+        worst_net_profit >=
+        float(config.MIN_PROFIT)
+    )
+
+    profitable_by_percent = (
+        net_profit_percent >=
+        float(config.MIN_PROFIT_PERCENT)
+    )
+
+    profitable = (
+        profitable_by_usdt
+        and profitable_by_percent
+    )
+
+    # ========================================================
+    # RETURN MARKET DATA
+    # ========================================================
 
     return {
 
-        "prices": prices,
+        "prices":
+            prices,
 
-        "buy_exchange": buy_exchange,
+        "buy_exchange":
+            buy_exchange,
 
-        "sell_exchange": sell_exchange,
+        "sell_exchange":
+            sell_exchange,
 
-        "buy_price": round(
-            buy_price,
-            2
-        ),
+        "buy_price":
+            round(
+                buy_price,
+                8
+            ),
 
-        "sell_price": round(
-            sell_price,
-            2
-        ),
+        "sell_price":
+            round(
+                sell_price,
+                8
+            ),
 
-        "difference": round(
-            difference,
-            2
-        ),
+        "difference":
+            round(
+                difference,
+                8
+            ),
 
-        "fees": round(
-            total_fees,
-            2
-        ),
+        "spread_percent":
+            round(
+                spread_percent,
+                8
+            ),
 
-        "net_profit": round(
-            net_profit,
-            2
-        ),
+        "trade_amount":
+            round(
+                trade_amount,
+                8
+            ),
+
+        "btc_amount":
+            round(
+                btc_amount,
+                12
+            ),
+
+        "buy_fee":
+            round(
+                worst_buy_fee,
+                8
+            ),
+
+        "sell_fee":
+            round(
+                worst_sell_fee,
+                8
+            ),
+
+        "fees":
+            round(
+                worst_buy_fee +
+                worst_sell_fee,
+                8
+            ),
+
+        "net_profit":
+            round(
+                worst_net_profit,
+                8
+            ),
+
+        "net_profit_percent":
+            round(
+                net_profit_percent,
+                8
+            ),
 
         "minimum_profit":
-            config.MIN_PROFIT,
+            float(config.MIN_PROFIT),
+
+        "minimum_profit_percent":
+            float(config.MIN_PROFIT_PERCENT),
+
+        "profitable":
+            profitable,
 
         "auto_trade_enabled":
-            config.AUTO_TRADE_ENABLED
+            config.AUTO_TRADE_ENABLED,
 
+        "live_trading_armed":
+            config.LIVE_TRADING_ARMED,
+
+        "trading_mode":
+            config.TRADING_MODE,
     }
 
 
 # ============================================================
-# EXECUTE TRADE (ROUTER: PAPER vs LIVE)
+# EXECUTE REAL TRADE
 # ============================================================
 
-def execute_paper_trade(market_data, custom_amount=None, is_manual=False):
+def execute_real_trade(
+    market_data,
+    custom_amount=None,
+    is_manual=False
+):
 
     global last_trade_time
     global last_trade_key
 
-    if not market_data:
+    # ========================================================
+    # LIVE ONLY
+    # ========================================================
+
+    if config.TRADING_MODE != "LIVE":
+
         return {
+
             "success": False,
-            "message": "Market data unavailable."
+
+            "message":
+                "Only LIVE trading is supported.",
         }
 
-    if not is_manual and custom_amount is None and market_data["net_profit"] < config.MIN_PROFIT:
+    # ========================================================
+    # MARKET DATA CHECK
+    # ========================================================
+
+    if not market_data:
+
         return {
+
             "success": False,
-            "message": f"Execution skipped: Profit (${market_data['net_profit']:.2f}) is below minimum requirement ${config.MIN_PROFIT:.2f} USDT."
+
+            "message":
+                "No market data available.",
         }
+
+    # ========================================================
+    # AUTO / MANUAL CHECK
+    # ========================================================
+
+    if not is_manual:
+
+        if not config.AUTO_TRADE_ENABLED:
+
+            return {
+
+                "success": False,
+
+                "message":
+                    (
+                        "Automatic trading is disabled. "
+                        "Use manual execution."
+                    ),
+            }
+
+    # ========================================================
+    # LIVE TRADING ARM CHECK
+    # ========================================================
+
+    if not config.LIVE_TRADING_ARMED:
+
+        return {
+
+            "success": False,
+
+            "message":
+                (
+                    "LIVE TRADING IS NOT ARMED. "
+                    "Set LIVE_TRADING_ARMED=True "
+                    "only after read-only tests pass."
+                ),
+        }
+
+    # ========================================================
+    # EXCHANGE VALIDATION
+    # ========================================================
+
+    buy_exchange = (
+        market_data.get(
+            "buy_exchange"
+        )
+    )
+
+    sell_exchange = (
+        market_data.get(
+            "sell_exchange"
+        )
+    )
+
+    if not buy_exchange or not sell_exchange:
+
+        return {
+
+            "success": False,
+
+            "message":
+                "Invalid buy/sell exchange.",
+        }
+
+    # Only Binance and Bybit are allowed.
+
+    if buy_exchange not in config.SUPPORTED_EXCHANGES:
+
+        return {
+
+            "success": False,
+
+            "message":
+                f"Unsupported buy exchange: {buy_exchange}",
+        }
+
+    if sell_exchange not in config.SUPPORTED_EXCHANGES:
+
+        return {
+
+            "success": False,
+
+            "message":
+                f"Unsupported sell exchange: {sell_exchange}",
+        }
+
+    if buy_exchange == sell_exchange:
+
+        return {
+
+            "success": False,
+
+            "message":
+                "Buy and sell exchanges cannot be the same.",
+        }
+
+    # ========================================================
+    # PRICE VALIDATION
+    # ========================================================
+
+    buy_price = float(
+        market_data.get(
+            "buy_price",
+            0
+        )
+    )
+
+    sell_price = float(
+        market_data.get(
+            "sell_price",
+            0
+        )
+    )
+
+    if buy_price <= 0 or sell_price <= 0:
+
+        return {
+
+            "success": False,
+
+            "message":
+                "Invalid market prices.",
+        }
+
+    if sell_price <= buy_price:
+
+        return {
+
+            "success": False,
+
+            "message":
+                "No positive arbitrage spread.",
+        }
+
+    # ========================================================
+    # PROFIT CHECK - USDT
+    # ========================================================
+
+    net_profit = float(
+        market_data.get(
+            "net_profit",
+            0
+        )
+    )
+
+    if net_profit < float(
+        config.MIN_PROFIT
+    ):
+
+        return {
+
+            "success": False,
+
+            "message":
+                (
+                    "Trade rejected: estimated "
+                    "net profit is below minimum."
+                ),
+
+            "net_profit":
+                net_profit,
+
+            "minimum_profit":
+                float(config.MIN_PROFIT),
+        }
+
+    # ========================================================
+    # PROFIT CHECK - PERCENTAGE
+    # ========================================================
+
+    net_profit_percent = float(
+        market_data.get(
+            "net_profit_percent",
+            0
+        )
+    )
+
+    if net_profit_percent < float(
+        config.MIN_PROFIT_PERCENT
+    ):
+
+        return {
+
+            "success": False,
+
+            "message":
+                (
+                    "Trade rejected: estimated "
+                    "net profit percentage is below minimum."
+                ),
+
+            "net_profit_percent":
+                net_profit_percent,
+
+            "minimum_profit_percent":
+                float(config.MIN_PROFIT_PERCENT),
+        }
+
+    # ========================================================
+    # DUPLICATE / COOLDOWN PROTECTION
+    # ========================================================
 
     current_time = time.time()
+
     trade_key = (
-        market_data["buy_exchange"],
-        market_data["sell_exchange"]
+        f"{buy_exchange}:"
+        f"{sell_exchange}"
     )
 
     if (
-        not is_manual
-        and trade_key == last_trade_key
-        and current_time - last_trade_time < config.AUTO_TRADE_COOLDOWN
-        and not custom_amount
+        trade_key == last_trade_key
+        and (
+            current_time -
+            last_trade_time
+        ) < float(
+            config.AUTO_TRADE_COOLDOWN
+        )
     ):
-        remaining = int(config.AUTO_TRADE_COOLDOWN - (current_time - last_trade_time))
+
+        remaining = max(
+            0,
+            int(
+                config.AUTO_TRADE_COOLDOWN
+                - (
+                    current_time -
+                    last_trade_time
+                )
+            )
+        )
+
         return {
+
             "success": False,
-            "message": f"Cooldown active. Wait {remaining}s."
-        }
 
-    create_database()
-
-    trading_mode = getattr(config, "TRADING_MODE", "PAPER")
-
-    # ========================================================
-    # LIVE REAL TRADING MODE
-    # ========================================================
-    if trading_mode == "LIVE":
-        print("🔴 EXECUTING LIVE REAL TRADE...")
-        live_res = execute_live_real_trade(
-            market_data["buy_exchange"],
-            market_data["sell_exchange"],
-            market_data["buy_price"],
-            market_data["sell_price"],
-            trade_amount=custom_amount or getattr(config, "DEFAULT_TRADE_AMOUNT", 1000.0)
-        )
-
-        if live_res.get("success"):
-            trade = live_res["trade"]
-            save_trade(trade)
-
-            last_trade_time = current_time
-            last_trade_key = trade_key
-
-            return {
-                "success": True,
-                "message": live_res["message"],
-                "trade": trade,
-                "summary": PaperTrader().summary()
-            }
-
-        # Fallback to Realistic Simulation if Live API key/balance is missing
-        print(f"⚠️ Live trade unavailable ({live_res.get('message')}). Executing via Realistic Simulation.")
-        trader = PaperTrader()
-        trade = trader.execute_trade(
-            market_data["buy_exchange"],
-            market_data["sell_exchange"],
-            market_data["buy_price"],
-            market_data["sell_price"],
-            custom_amount=custom_amount
-        )
-
-        save_trade(trade)
-
-        last_trade_time = current_time
-        last_trade_key = trade_key
-
-        return {
-            "success": True,
-            "message": f"⚡ Executed via Realistic Simulation: {live_res.get('message')}",
-            "trade": trade,
-            "summary": trader.summary()
+            "message":
+                (
+                    f"Trade cooldown active. "
+                    f"Wait {remaining} seconds."
+                ),
         }
 
     # ========================================================
-    # PAPER TRADING MODE (REALISTIC SIMULATION)
+    # TRADE AMOUNT
     # ========================================================
-    trader = PaperTrader()
-    trade = trader.execute_trade(
-        market_data["buy_exchange"],
-        market_data["sell_exchange"],
-        market_data["buy_price"],
-        market_data["sell_price"],
-        custom_amount=custom_amount
+
+    if custom_amount is not None:
+
+        trade_amount = float(
+            custom_amount
+        )
+
+    else:
+
+        trade_amount = float(
+            config.DEFAULT_TRADE_AMOUNT
+        )
+
+    # Never exceed maximum configured amount.
+
+    trade_amount = min(
+        trade_amount,
+        float(config.MAX_TRADE_AMOUNT_USDT)
     )
 
-    save_trade(trade)
+    if trade_amount < float(
+        config.MIN_TRADE_USDT
+    ):
 
-    last_trade_time = current_time
-    last_trade_key = trade_key
+        return {
+
+            "success": False,
+
+            "message":
+                (
+                    f"Trade amount {trade_amount:.4f} USDT "
+                    f"is below minimum "
+                    f"{config.MIN_TRADE_USDT:.4f} USDT."
+                ),
+        }
+
+    # ========================================================
+    # REAL EXECUTION
+    # ========================================================
+
+    print()
+    print(
+        "=========================================="
+    )
+    print(
+        "       REAL TRADE EXECUTION"
+    )
+    print(
+        "=========================================="
+    )
+
+    print(
+        f"BUY  : {buy_exchange}"
+    )
+
+    print(
+        f"SELL : {sell_exchange}"
+    )
+
+    print(
+        f"BUY PRICE  : {buy_price:.2f}"
+    )
+
+    print(
+        f"SELL PRICE : {sell_price:.2f}"
+    )
+
+    print(
+        f"AMOUNT     : {trade_amount:.4f} USDT"
+    )
+
+    print(
+        f"EST. NET   : {net_profit:.8f} USDT"
+    )
+
+    print(
+        "=========================================="
+    )
+
+    result = execute_live_real_trade(
+
+        buy_exchange_name=
+            buy_exchange,
+
+        sell_exchange_name=
+            sell_exchange,
+
+        buy_price=
+            buy_price,
+
+        sell_price=
+            sell_price,
+
+        trade_amount=
+            trade_amount,
+    )
+
+    # ========================================================
+    # SUCCESS
+    # ========================================================
+
+    if result.get("success"):
+
+        trade = result.get(
+            "trade"
+        )
+
+        if trade:
+
+            save_trade(
+                trade
+            )
+
+        last_trade_time = (
+            current_time
+        )
+
+        last_trade_key = (
+            trade_key
+        )
+
+        return {
+
+            "success": True,
+
+            "message":
+                "REAL LIVE TRADE EXECUTED.",
+
+            "trade":
+                trade,
+
+            "buy_exchange":
+                buy_exchange,
+
+            "sell_exchange":
+                sell_exchange,
+
+            "trade_amount":
+                trade_amount,
+
+            "estimated_net_profit":
+                net_profit,
+        }
+
+    # ========================================================
+    # FAILURE
+    # ========================================================
 
     return {
-        "success": True,
-        "message": "Automatic paper trade executed successfully.",
-        "trade": trade,
-        "summary": trader.summary()
+
+        "success": False,
+
+        "message":
+            result.get(
+                "message",
+                "Real trade failed."
+            ),
+
+        "recovery_required":
+            result.get(
+                "recovery_required",
+                False
+            ),
+
+        "buy_order_id":
+            result.get(
+                "buy_order_id"
+            ),
+
+        "sell_order_id":
+            result.get(
+                "sell_order_id"
+            ),
+
+        "btc_amount":
+            result.get(
+                "btc_amount"
+            ),
+
+        "buy_exchange":
+            buy_exchange,
+
+        "sell_exchange":
+            sell_exchange,
     }
 
 
 # ============================================================
-# TEST MODE
+# CLI TEST
 # ============================================================
 
 if __name__ == "__main__":
 
+    create_database()
+
     data = analyze_market()
 
-    if data:
+    if not data:
 
-        print()
         print(
-            "========== ARBITRAGE ANALYSIS =========="
+            "Unable to obtain enough live prices."
         )
+
+    else:
+
         print()
+        print(
+            "=========================================="
+        )
+        print(
+            "       LIVE ARBITRAGE ANALYSIS"
+        )
+        print(
+            "=========================================="
+        )
+
+        # ----------------------------------------------------
+        # PRICES
+        # ----------------------------------------------------
 
         print(
-            f"Buy From       : "
+            f"Binance   : "
+            f"{data['prices'].get('Binance', 'N/A')}"
+        )
+
+        print(
+            f"Bybit     : "
+            f"{data['prices'].get('Bybit', 'N/A')}"
+        )
+
+        print(
+            "------------------------------------------"
+        )
+
+        # ----------------------------------------------------
+        # BUY / SELL
+        # ----------------------------------------------------
+
+        print(
+            f"BUY       : "
             f"{data['buy_exchange']}"
         )
 
         print(
-            f"Buy Price      : "
-            f"{data['buy_price']:.2f} USDT"
+            f"BUY PRICE : "
+            f"{data['buy_price']:.2f}"
         )
 
-        print()
-
         print(
-            f"Sell On        : "
+            f"SELL      : "
             f"{data['sell_exchange']}"
         )
 
         print(
-            f"Sell Price     : "
-            f"{data['sell_price']:.2f} USDT"
+            f"SELL PRICE: "
+            f"{data['sell_price']:.2f}"
         )
 
-        print()
+        # ----------------------------------------------------
+        # SPREAD
+        # ----------------------------------------------------
 
         print(
-            f"Difference     : "
-            f"{data['difference']:.2f} USDT"
-        )
-
-        print(
-            f"Total Fees     : "
-            f"{data['fees']:.2f} USDT"
+            f"SPREAD    : "
+            f"{data['spread_percent']:.4f}%"
         )
 
         print(
-            f"Minimum Profit : "
-            f"{data['minimum_profit']:.2f} USDT"
+            f"DIFFERENCE: "
+            f"{data['difference']:.8f} USDT"
+        )
+
+        # ----------------------------------------------------
+        # TRADE SIZE
+        # ----------------------------------------------------
+
+        print(
+            f"TRADE SIZE: "
+            f"{data['trade_amount']:.4f} USDT"
         )
 
         print(
-            f"Net Profit     : "
-            f"{data['net_profit']:.2f} USDT"
+            f"BTC AMOUNT: "
+            f"{data['btc_amount']:.12f} BTC"
         )
 
-        print()
+        # ----------------------------------------------------
+        # FEES
+        # ----------------------------------------------------
 
-        if (
-            config.AUTO_TRADE_ENABLED
-            and
-            data["net_profit"]
-            >= config.MIN_PROFIT
-        ):
+        print(
+            f"EST. FEES : "
+            f"{data['fees']:.8f} USDT"
+        )
+
+        # ----------------------------------------------------
+        # PROFIT
+        # ----------------------------------------------------
+
+        print(
+            f"NET PROFIT: "
+            f"{data['net_profit']:.8f} USDT"
+        )
+
+        print(
+            f"NET %     : "
+            f"{data['net_profit_percent']:.4f}%"
+        )
+
+        # ----------------------------------------------------
+        # PROFIT STATUS
+        # ----------------------------------------------------
+
+        if data["profitable"]:
 
             print(
-                "🟢 AUTO TRADE OPPORTUNITY"
+                "STATUS    : ✅ PROFITABLE"
             )
 
         else:
 
             print(
-                "🔴 NO AUTO TRADE"
+                "STATUS    : ❌ NOT PROFITABLE"
             )
+
+        # ----------------------------------------------------
+        # SAFETY STATUS
+        # ----------------------------------------------------
+
+        print(
+            "------------------------------------------"
+        )
+
+        print(
+            f"AUTO TRADE: "
+            f"{config.AUTO_TRADE_ENABLED}"
+        )
+
+        print(
+            f"LIVE ARM  : "
+            f"{config.LIVE_TRADING_ARMED}"
+        )
+
+        print(
+            f"MODE      : "
+            f"{config.TRADING_MODE}"
+        )
+
+        print(
+            "=========================================="
+        )
