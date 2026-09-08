@@ -57,12 +57,6 @@ binance_opts = {
 bybit_opts = {
     "enableRateLimit": True,
     "timeout": 20000,
-    "urls": {
-        "api": {
-            "public": "https://api.bybit.com",
-            "private": "https://api.bybit.com"
-        }
-    },
     "options": {
         "defaultType": "spot",
         "recvWindow": 60000,
@@ -156,6 +150,7 @@ def get_authenticated_exchange(name):
             "enableRateLimit": True,
             "timeout": 20000,
             "options": {
+                "defaultType": "spot",
                 "recvWindow": 60000,
                 "adjustForTimeDifference": True
             }
@@ -178,17 +173,7 @@ def get_authenticated_exchange(name):
         # ----------------------------------------------------
 
         if name.lower() == "bybit":
-
-            config_opts["urls"] = {
-                "api": {
-                    "public": "https://api.bybit.com",
-                    "private": "https://api.bybit.com"
-                }
-            }
-
             config_opts["options"]["defaultType"] = "spot"
-
-
 
 
         # ----------------------------------------------------
