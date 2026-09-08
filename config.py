@@ -65,7 +65,9 @@ AUTO_TRADE_ENABLED = False
 # True  = Real order execution is allowed
 #         when all other conditions are satisfied.
 
-LIVE_TRADING_ARMED = False
+LIVE_TRADING_ARMED = (
+    os.getenv("LIVE_TRADING_ARMED", "false").lower() == "true"
+)
 
 
 # ============================================================

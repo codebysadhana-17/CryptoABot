@@ -1291,12 +1291,22 @@ def execute_live_real_trade(
         if getattr(
             config,
             "DYNAMIC_BALANCE_TRADING",
-            True
+                True
         ):
+
+            max_usage = float(
+                getattr(
+                    config,
+                    "MAX_BALANCE_USAGE",
+                    0.90
+                )
+            )
+
+            max_from_balance = free_usdt * max_usage
 
             trade_amount = min(
                 float(trade_amount),
-                free_usdt * 0.98
+                max_from_balance
             )
 
 

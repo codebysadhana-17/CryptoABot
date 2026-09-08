@@ -234,10 +234,10 @@
         <div style="margin-top:25px;">
             <label style="display:block; color:#94a3b8; font-size:13px; font-weight:600; margin-bottom:10px;">SELECT TRADE AMOUNT (USDT):</label>
             <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                <button class="size-btn active" onclick="selectTradeSize(500, this)">$500</button>
-                <button class="size-btn" onclick="selectTradeSize(1000, this)">$1,000</button>
-                <button class="size-btn" onclick="selectTradeSize(2500, this)">$2,500</button>
-                <button class="size-btn" onclick="selectTradeSize(5000, this)">$5,000</button>
+                <button class="size-btn active" onclick="selectTradeSize(5, this)">$5</button>
+                <button class="size-btn" onclick="selectTradeSize(100, this)">$100</button>
+                <button class="size-btn" onclick="selectTradeSize(200, this)">$200</button>
+                <button class="size-btn" onclick="selectTradeSize(500, this)">$500</button>
                 <input type="number" id="customTradeSize" placeholder="Custom USDT" style="background:#0c1526; border:1px solid #202e45; color:white; padding:10px 14px; border-radius:8px; width:130px; font-size:14px;" oninput="onCustomSizeInput(this.value)">
             </div>
         </div>
@@ -355,7 +355,7 @@
 
 <script>
 
-let selectedTradeSize = 500;
+let selectedTradeSize = 5;
 
 function updateTime() {
     document.getElementById("time").innerText = new Date().toLocaleTimeString();
@@ -490,7 +490,7 @@ async function executeTrade() {
 
             // Step 2 active -> done
             await new Promise(r => setTimeout(r, 400));
-            showStep(2, `Cross-Exchange Transfer`, `Transferring ${trade.btc_amount} BTC -> ${trade.sell}`, true);
+            showStep(2,`SELL Exchange Balance Verified`,`${trade.btc_amount} BTC available on ${trade.sell}`,true);
 
             // Step 3 active -> done
             await new Promise(r => setTimeout(r, 400));
