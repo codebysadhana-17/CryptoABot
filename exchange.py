@@ -41,46 +41,76 @@ if proxy_url:
 
 
 # ============================================================
-# PUBLIC EXCHANGE CONFIGURATION
+# EXCHANGE OPTIONS
+# ============================================================
+
+REQUEST_TIMEOUT = getattr(
+    config,
+    "REQUEST_TIMEOUT_MS",
+    20000,
+)
+
+
+# ============================================================
+# BINANCE PUBLIC OPTIONS
 # ============================================================
 
 binance_opts = {
     "enableRateLimit": True,
-    "timeout": 20000,
+    "timeout": REQUEST_TIMEOUT,
     "options": {
         "recvWindow": 60000,
-        "adjustForTimeDifference": True
-    }
-}
-
-
-bybit_opts = {
-    "enableRateLimit": True,
-    "timeout": 20000,
-    "options": {
+        "adjustForTimeDifference": True,
         "defaultType": "spot",
-        "recvWindow": 60000,
-        "adjustForTimeDifference": True
-    }
+    },
 }
-
-
 
 
 # ============================================================
-# APPLY PROXY
+# BYBIT PUBLIC OPTIONS
+# ============================================================
+#
+# IMPORTANT:
+# Bybit was successfully tested with:
+#
+# defaultType = spot
+# recvWindow = 20000
+# adjustForTimeDifference = False
+# accountType = UNIFIED
+#
+# Do NOT enable automatic time synchronization for Bybit.
+#
+# ============================================================
+
+bybit_opts = {
+    "enableRateLimit": True,
+    "timeout": REQUEST_TIMEOUT,
+    "options": {
+        "defaultType": "spot",
+        "recvWindow": 20000,
+        "adjustForTimeDifference": False,
+        "accountType": "UNIFIED",
+    },
+}
+
+
+# ============================================================
+# APPLY PROXY TO PUBLIC OPTIONS
 # ============================================================
 
 if proxy_url:
 
     for opts in (
         binance_opts,
-        bybit_opts
+        bybit_opts,
     ):
 
         if "socks" in proxy_url.lower():
+
             opts["socksProxy"] = proxy_url
+
         else:
+
             opts["httpsProxy"] = proxy_url
 
 
@@ -90,12 +120,12 @@ if proxy_url:
 
 exchanges = {
     "Binance": ccxt.binance(binance_opts),
-    "Bybit": ccxt.bybit(bybit_opts)
+    "Bybit": ccxt.bybit(bybit_opts),
 }
 
 
 # ============================================================
-# APPLY PROXY TO SESSIONS
+# APPLY PROXY TO PUBLIC SESSIONS
 # ============================================================
 
 if proxy_url:
@@ -106,7 +136,7 @@ if proxy_url:
 
             ex.session.proxies = {
                 "http": proxy_url,
-                "https": proxy_url
+                "https": proxy_url,
             }
 
         except Exception:
@@ -114,7 +144,7 @@ if proxy_url:
 
 
 # ============================================================
-# GET AUTHENTICATED EXCHANGE
+# HELPER: GET API AUTHENTICATED EXCHANGE
 # ============================================================
 
 def get_authenticated_exchange(name):
@@ -127,35 +157,81 @@ def get_authenticated_exchange(name):
         or not key_info.get("api_secret")
     ):
 
-        return None, f"No API keys configured for {name}."
-
+        return None, (
+            f"No API keys configured for {name}."
+        )
 
     exchange_class = getattr(
         ccxt,
         name.lower(),
-        None
+        None,
     )
-
 
     if not exchange_class:
 
-        return None, f"Unsupported exchange: {name}"
-
+        return None, (
+            f"Unsupported exchange: {name}"
+        )
 
     try:
+
+        # ====================================================
+        # COMMON AUTH CONFIG
+        # ====================================================
 
         config_opts = {
             "apiKey": key_info["api_key"],
             "secret": key_info["api_secret"],
             "enableRateLimit": True,
-            "timeout": 20000,
+            "timeout": REQUEST_TIMEOUT,
             "options": {
                 "defaultType": "spot",
-                "recvWindow": 60000,
-                "adjustForTimeDifference": True
-            }
+                "recvWindow": 20000,
+            },
         }
 
+
+        # ====================================================
+        # BINANCE
+        # ====================================================
+
+        if name.lower() == "binance":
+
+            config_opts["options"].update({
+                "defaultType": "spot",
+                "adjustForTimeDifference": True,
+            })
+
+
+        # ====================================================
+        # BYBIT
+        # ====================================================
+        #
+        # IMPORTANT:
+        # This configuration is based on the working
+        # test_bybit_balance.py.
+        #
+        # DO NOT call:
+        #     load_time_difference()
+        #
+        # DO NOT use:
+        #     adjustForTimeDifference = True
+        #
+        # ====================================================
+
+        elif name.lower() == "bybit":
+
+            config_opts["options"].update({
+                "defaultType": "spot",
+                "adjustForTimeDifference": False,
+                "recvWindow": 20000,
+                "accountType": "UNIFIED",
+            })
+
+
+        # ====================================================
+        # PROXY
+        # ====================================================
 
         if proxy_url:
 
@@ -168,80 +244,128 @@ def get_authenticated_exchange(name):
                 config_opts["httpsProxy"] = proxy_url
 
 
-        # ----------------------------------------------------
-        # BYBIT
-        # ----------------------------------------------------
+        # ====================================================
+        # CREATE AUTHENTICATED INSTANCE
+        # ====================================================
 
-        if name.lower() == "bybit":
-            config_opts["options"]["defaultType"] = "spot"
-
-
-        # ----------------------------------------------------
-        # CREATE INSTANCE
-        # ----------------------------------------------------
-
-        ex_instance = exchange_class(config_opts)
+        ex_instance = exchange_class(
+            config_opts
+        )
 
 
-        # ----------------------------------------------------
-        # APPLY PROXY
-        # ----------------------------------------------------
+        # ====================================================
+        # APPLY PROXY TO SESSION
+        # ====================================================
 
         if (
             proxy_url
-            and hasattr(ex_instance, "session")
+            and hasattr(
+                ex_instance,
+                "session",
+            )
         ):
 
             try:
 
                 ex_instance.session.proxies = {
                     "http": proxy_url,
-                    "https": proxy_url
+                    "https": proxy_url,
                 }
 
             except Exception:
                 pass
 
 
-        # ----------------------------------------------------
-        # LOAD MARKETS
-        # ----------------------------------------------------
+        # ====================================================
+        # IMPORTANT
+        # ====================================================
+        #
+        # DO NOT load_markets() here.
+        #
+        # Authentication / balance checking should not
+        # require market loading.
+        #
+        # execute_live_real_trade() will load markets
+        # only when actually preparing an order.
+        #
+        # ====================================================
 
-        try:
 
-            ex_instance.load_markets()
+        # ====================================================
+        # BINANCE TIME SYNC ONLY
+        # ====================================================
 
-        except Exception:
+        if name.lower() == "binance":
 
-            pass
+            try:
+
+                if hasattr(
+                    ex_instance,
+                    "load_time_difference",
+                ):
+
+                    ex_instance.load_time_difference()
+
+            except Exception as e:
+
+                print(
+                    f"⚠️ Binance time sync warning: {e}",
+                    flush=True,
+                )
 
 
-        # ----------------------------------------------------
-        # TIME DIFFERENCE
-        # ----------------------------------------------------
-
-        try:
-
-            if hasattr(
-                ex_instance,
-                "load_time_difference"
-            ):
-
-                ex_instance.load_time_difference()
-
-        except Exception:
-
-            pass
-
+        # ====================================================
+        # RETURN
+        # ====================================================
 
         return ex_instance, None
 
+
+    # ========================================================
+    # AUTHENTICATION ERROR
+    # ========================================================
+
+    except ccxt.AuthenticationError as e:
+
+        return None, (
+            f"{name} authentication failed: "
+            f"{str(e)}"
+        )
+
+
+    # ========================================================
+    # PERMISSION ERROR
+    # ========================================================
+
+    except ccxt.PermissionDenied as e:
+
+        return None, (
+            f"{name} permission denied: "
+            f"{str(e)}"
+        )
+
+
+    # ========================================================
+    # NETWORK ERROR
+    # ========================================================
+
+    except ccxt.NetworkError as e:
+
+        return None, (
+            f"{name} network error: "
+            f"{str(e)}"
+        )
+
+
+    # ========================================================
+    # OTHER ERROR
+    # ========================================================
 
     except Exception as e:
 
         return None, (
             f"Failed to initialize {name}: "
-            f"{str(e)}"
+            f"{type(e).__name__}: {str(e)}"
         )
 
 
@@ -251,51 +375,22 @@ def get_authenticated_exchange(name):
 
 def get_actual_wallet_balances():
 
-    """
-    Fetch REAL wallet balances from configured exchanges.
-
-    This function:
-        - Does NOT execute any trade.
-        - Does NOT modify paper portfolio.
-        - Only reads wallet balances.
-
-    Returns:
-
-    {
-        "Binance": {
-            "connected": True,
-            "usdt": 100.00,
-            "total_usdt": 100.00,
-            "btc": 0.001,
-            "total_btc": 0.001,
-            "error": None
-        }
-    }
-    """
-
     balances = {}
-
 
     exchange_names = [
         "Binance",
-        "Bybit"
+        "Bybit",
     ]
-
 
     for exchange_name in exchange_names:
 
         try:
-
-            # ------------------------------------------------
-            # GET AUTHENTICATED INSTANCE
-            # ------------------------------------------------
 
             exchange, error = (
                 get_authenticated_exchange(
                     exchange_name
                 )
             )
-
 
             if error or exchange is None:
 
@@ -308,93 +403,51 @@ def get_actual_wallet_balances():
                     "error": (
                         error
                         or "Unable to connect."
-                    )
+                    ),
                 }
 
                 continue
 
 
-            # ------------------------------------------------
-            # FETCH REAL BALANCE
-            # ------------------------------------------------
+            # =================================================
+            # FETCH BALANCE
+            # =================================================
 
             balance = exchange.fetch_balance()
 
 
             free = (
-                balance.get(
-                    "free",
-                    {}
-                )
+                balance.get("free", {})
                 or {}
             )
-
 
             used = (
-                balance.get(
-                    "used",
-                    {}
-                )
+                balance.get("used", {})
                 or {}
             )
-
 
             total = (
-                balance.get(
-                    "total",
-                    {}
-                )
+                balance.get("total", {})
                 or {}
             )
 
 
-            # ------------------------------------------------
-            # USDT FREE
-            # ------------------------------------------------
+            # =================================================
+            # USDT
+            # =================================================
 
             usdt_free = float(
-                free.get(
-                    "USDT",
-                    0.0
-                )
-                or free.get(
-                    "USD",
-                    0.0
-                )
+                free.get("USDT", 0.0)
                 or 0.0
             )
-
-
-            # ------------------------------------------------
-            # USDT USED
-            # ------------------------------------------------
 
             usdt_used = float(
-                used.get(
-                    "USDT",
-                    0.0
-                )
-                or used.get(
-                    "USD",
-                    0.0
-                )
+                used.get("USDT", 0.0)
                 or 0.0
             )
 
-
-            # ------------------------------------------------
-            # USDT TOTAL
-            # ------------------------------------------------
-
             usdt_total = float(
-                total.get(
-                    "USDT",
-                    0.0
-                )
-                or total.get(
-                    "USD",
-                    0.0
-                )
+                total.get("USDT", 0.0)
                 or (
                     usdt_free
                     + usdt_used
@@ -403,41 +456,22 @@ def get_actual_wallet_balances():
             )
 
 
-            # ------------------------------------------------
-            # BTC FREE
-            # ------------------------------------------------
+            # =================================================
+            # BTC
+            # =================================================
 
             btc_free = float(
-                free.get(
-                    "BTC",
-                    0.0
-                )
+                free.get("BTC", 0.0)
                 or 0.0
             )
-
-
-            # ------------------------------------------------
-            # BTC USED
-            # ------------------------------------------------
 
             btc_used = float(
-                used.get(
-                    "BTC",
-                    0.0
-                )
+                used.get("BTC", 0.0)
                 or 0.0
             )
 
-
-            # ------------------------------------------------
-            # BTC TOTAL
-            # ------------------------------------------------
-
             btc_total = float(
-                total.get(
-                    "BTC",
-                    0.0
-                )
+                total.get("BTC", 0.0)
                 or (
                     btc_free
                     + btc_used
@@ -446,126 +480,101 @@ def get_actual_wallet_balances():
             )
 
 
-            # ------------------------------------------------
-            # SAVE RESULT
-            # ------------------------------------------------
+            # =================================================
+            # SAVE BALANCE
+            # =================================================
 
             balances[exchange_name] = {
 
                 "connected": True,
 
-                # Available USDT
                 "usdt": round(
                     usdt_free,
-                    8
+                    8,
                 ),
 
-                # Total USDT
                 "total_usdt": round(
                     usdt_total,
-                    8
+                    8,
                 ),
 
-                # Available BTC
                 "btc": round(
                     btc_free,
-                    8
+                    8,
                 ),
 
-                # Total BTC
                 "total_btc": round(
                     btc_total,
-                    8
+                    8,
                 ),
 
-                "error": None
+                "error": None,
             }
 
 
             print(
                 f"💰 {exchange_name} Wallet | "
-                f"USDT: {usdt_total:.4f} | "
+                f"USDT: {usdt_total:.8f} | "
                 f"BTC: {btc_total:.8f}",
-                flush=True
+                flush=True,
             )
 
 
         except ccxt.AuthenticationError:
 
             balances[exchange_name] = {
-
                 "connected": False,
-
                 "usdt": 0.0,
-
                 "total_usdt": 0.0,
-
                 "btc": 0.0,
-
                 "total_btc": 0.0,
-
                 "error": (
                     "Invalid API key or secret."
-                )
+                ),
             }
 
 
         except ccxt.PermissionDenied:
 
             balances[exchange_name] = {
-
                 "connected": False,
-
                 "usdt": 0.0,
-
                 "total_usdt": 0.0,
-
                 "btc": 0.0,
-
                 "total_btc": 0.0,
-
                 "error": (
                     "API key does not have "
                     "balance permission."
-                )
+                ),
             }
 
 
         except ccxt.NetworkError as e:
 
             balances[exchange_name] = {
-
                 "connected": False,
-
                 "usdt": 0.0,
-
                 "total_usdt": 0.0,
-
                 "btc": 0.0,
-
                 "total_btc": 0.0,
-
                 "error": (
                     f"Network error: {str(e)}"
-                )
+                ),
             }
 
 
         except Exception as e:
 
             balances[exchange_name] = {
-
                 "connected": False,
-
                 "usdt": 0.0,
-
                 "total_usdt": 0.0,
-
                 "btc": 0.0,
-
                 "total_btc": 0.0,
-
-                "error": str(e)
+                "error": (
+                    f"{type(e).__name__}: "
+                    f"{str(e)}"
+                ),
             }
 
 
@@ -582,12 +591,11 @@ def test_exchange_connection(name):
         get_authenticated_exchange(name)
     )
 
-
     if err:
 
         return {
             "success": False,
-            "message": err
+            "message": err,
         }
 
 
@@ -597,41 +605,43 @@ def test_exchange_connection(name):
             ex_instance.fetch_balance()
         )
 
+        free = (
+            balance.get("free", {})
+            or {}
+        )
+
+        total = (
+            balance.get("total", {})
+            or {}
+        )
+
+
+        # =====================================================
+        # USDT
+        # =====================================================
 
         usdt_free = float(
-            balance
-            .get("free", {})
-            .get("USDT", 0.0)
-            or balance
-            .get("free", {})
-            .get("USD", 0.0)
+            free.get("USDT", 0.0)
             or 0.0
         )
-
-
-        btc_free = float(
-            balance
-            .get("free", {})
-            .get("BTC", 0.0)
-            or 0.0
-        )
-
 
         usdt_total = float(
-            balance
-            .get("total", {})
-            .get("USDT", 0.0)
-            or balance
-            .get("total", {})
-            .get("USD", 0.0)
+            total.get("USDT", 0.0)
             or usdt_free
         )
 
 
+        # =====================================================
+        # BTC
+        # =====================================================
+
+        btc_free = float(
+            free.get("BTC", 0.0)
+            or 0.0
+        )
+
         btc_total = float(
-            balance
-            .get("total", {})
-            .get("BTC", 0.0)
+            total.get("BTC", 0.0)
             or btc_free
         )
 
@@ -647,23 +657,23 @@ def test_exchange_connection(name):
 
             "usdt_balance": round(
                 usdt_free,
-                2
+                8,
             ),
 
             "usdt_total": round(
                 usdt_total,
-                2
+                8,
             ),
 
             "btc_balance": round(
                 btc_free,
-                8
+                8,
             ),
 
             "btc_total": round(
                 btc_total,
-                8
-            )
+                8,
+            ),
         }
 
 
@@ -675,7 +685,7 @@ def test_exchange_connection(name):
                 "Authentication Error: "
                 "Invalid API Key or Secret "
                 f"for {name}."
-            )
+            ),
         }
 
 
@@ -687,18 +697,32 @@ def test_exchange_connection(name):
                 "Permission Error: "
                 "API Key lacks balance "
                 f"permission on {name}."
-            )
+            ),
         }
 
 
     except Exception as e:
 
+        print(
+            f"\n❌ {name} ERROR"
+        )
+
+        print(
+            "Exception Type:",
+            type(e).__name__,
+        )
+
+        print(
+            "Exception:",
+            repr(e),
+        )
+
         return {
             "success": False,
             "message": (
-                f"Connection Error on "
-                f"{name}: {str(e)}"
-            )
+                f"{type(e).__name__}: "
+                f"{repr(e)}"
+            ),
         }
 
 
@@ -708,23 +732,22 @@ def test_exchange_connection(name):
 
 def get_direct_price(
     name,
-    symbol=SYMBOL
+    symbol=SYMBOL,
 ):
 
     clean_sym = symbol.replace(
         "/",
-        ""
+        "",
     )
+
+
+    # ========================================================
+    # SSL
+    # ========================================================
 
     import ssl
 
     ctx = ssl.create_default_context()
-
-    ctx.check_hostname = False
-
-    ctx.verify_mode = (
-        ssl.CERT_NONE
-    )
 
 
     # ========================================================
@@ -742,16 +765,10 @@ def get_direct_price(
             ),
 
             (
-                "https://api.binance.us/"
-                "api/v3/ticker/price?"
-                f"symbol={clean_sym}"
-            ),
-
-            (
                 "https://api.binance.com/"
                 "api/v3/ticker/price?"
                 f"symbol={clean_sym}"
-            )
+            ),
         ]
 
 
@@ -763,31 +780,32 @@ def get_direct_price(
                     url,
                     headers={
                         "User-Agent":
-                        "Mozilla/5.0"
-                    }
+                            "Mozilla/5.0",
+                    },
                 )
 
-
-                res = json.loads(
+                response = (
                     urllib.request.urlopen(
                         req,
                         context=ctx,
-                        timeout=6
-                    ).read()
+                        timeout=6,
+                    )
                 )
 
+                res = json.loads(
+                    response.read()
+                )
 
-                if (
-                    "price" in res
-                    and float(
-                        res["price"]
-                    ) > 0
-                ):
-
-                    return float(
-                        res["price"]
+                price = float(
+                    res.get(
+                        "price",
+                        0,
                     )
+                )
 
+                if price > 0:
+
+                    return price
 
             except Exception:
 
@@ -800,114 +818,61 @@ def get_direct_price(
 
     elif name.lower() == "bybit":
 
-        for base_url in [
+        base_url = (
             "https://api.bybit.com"
-        ]:
-
-            try:
-
-                url = (
-                    f"{base_url}/v5/market/tickers"
-                    f"?category=spot"
-                    f"&symbol={clean_sym}"
-                )
-
-
-                req = urllib.request.Request(
-                    url,
-                    headers={
-                        "User-Agent":
-                        "Mozilla/5.0"
-                    }
-                )
-
-
-                res = json.loads(
-                    urllib.request.urlopen(
-                        req,
-                        context=ctx,
-                        timeout=6
-                    ).read()
-                )
-
-
-                tickers = (
-                    res
-                    .get("result", {})
-                    .get("list", [])
-                )
-
-
-                if (
-                    tickers
-                    and "lastPrice"
-                    in tickers[0]
-                ):
-
-                    price = float(
-                        tickers[0]
-                        ["lastPrice"]
-                    )
-
-
-                    if price > 0:
-
-                        return price
-
-
-            except Exception:
-
-                continue
-
-
-    # ========================================================
-    # COINBASE
-    # ========================================================
-
-    elif name.lower() == "coinbase":
-
-        base_coin = symbol.split(
-            "/"
-        )[0]
-
+        )
 
         try:
 
             url = (
-                "https://api.coinbase.com/v2/"
-                "prices/"
-                f"{base_coin}-USD/spot"
+                f"{base_url}/v5/market/tickers"
+                f"?category=spot"
+                f"&symbol={clean_sym}"
             )
-
 
             req = urllib.request.Request(
                 url,
                 headers={
                     "User-Agent":
-                    "Mozilla/5.0"
-                }
+                        "Mozilla/5.0",
+                },
             )
 
-
-            res = json.loads(
+            response = (
                 urllib.request.urlopen(
                     req,
                     context=ctx,
-                    timeout=6
-                ).read()
+                    timeout=6,
+                )
             )
 
+            res = json.loads(
+                response.read()
+            )
 
-            if (
-                "data" in res
-                and "amount"
-                in res["data"]
-            ):
+            tickers = (
+                res.get(
+                    "result",
+                    {},
+                )
+                .get(
+                    "list",
+                    [],
+                )
+            )
 
-                return float(
-                    res["data"]["amount"]
+            if tickers:
+
+                price = float(
+                    tickers[0].get(
+                        "lastPrice",
+                        0,
+                    )
                 )
 
+                if price > 0:
+
+                    return price
 
         except Exception:
 
@@ -922,21 +887,23 @@ def get_direct_price(
 # ============================================================
 
 def fetch_single_exchange_price(
-    name_and_exchange
+    name_and_exchange,
 ):
 
-    name, exchange = (
-        name_and_exchange
-    )
+    name, exchange = name_and_exchange
 
 
     fetched_price = (
         get_direct_price(
             name,
-            SYMBOL
+            SYMBOL,
         )
     )
 
+
+    # ========================================================
+    # CCXT FALLBACK
+    # ========================================================
 
     if fetched_price is None:
 
@@ -948,14 +915,12 @@ def fetch_single_exchange_price(
                 )
             )
 
-
             last_price = ticker.get(
                 "last"
             )
 
-
             if (
-                last_price
+                last_price is not None
                 and float(last_price) > 0
             ):
 
@@ -963,13 +928,15 @@ def fetch_single_exchange_price(
                     last_price
                 )
 
-
         except Exception:
 
             pass
 
 
-    return name, fetched_price
+    return (
+        name,
+        fetched_price,
+    )
 
 
 # ============================================================
@@ -988,7 +955,7 @@ def get_live_prices():
         results = list(
             executor.map(
                 fetch_single_exchange_price,
-                exchanges.items()
+                exchanges.items(),
             )
         )
 
@@ -996,21 +963,18 @@ def get_live_prices():
     for name, fetched_price in results:
 
         if (
-            fetched_price
+            fetched_price is not None
             and fetched_price > 0
         ):
 
-            prices[name] = round(
-                fetched_price,
-                2
+            prices[name] = float(
+                fetched_price
             )
-
 
             print(
                 f"{name}: "
-                f"{prices[name]:.2f} USDT"
+                f"{fetched_price:.2f} USDT"
             )
-
 
         else:
 
@@ -1035,14 +999,14 @@ def get_symbol_currencies(symbol):
 
 
 # ============================================================
-# HELPER: CHECK MARKET LIMITS
+# HELPER: VALIDATE ORDER LIMITS
 # ============================================================
 
 def validate_order_limits(
     exchange,
     symbol,
     amount,
-    price
+    price,
 ):
 
     try:
@@ -1051,24 +1015,46 @@ def validate_order_limits(
             symbol
         )
 
+        limits = (
+            market.get(
+                "limits",
+                {},
+            )
+            or {}
+        )
 
-        limits = market.get(
-            "limits",
-            {}
+
+        amount_limits = (
+            limits.get(
+                "amount",
+                {},
+            )
+            or {}
+        )
+
+        cost_limits = (
+            limits.get(
+                "cost",
+                {},
+            )
+            or {}
         )
 
 
         min_amount = (
-            limits
-            .get("amount", {})
-            .get("min")
+            amount_limits.get("min")
         )
 
+        max_amount = (
+            amount_limits.get("max")
+        )
 
         min_cost = (
-            limits
-            .get("cost", {})
-            .get("min")
+            cost_limits.get("min")
+        )
+
+        max_cost = (
+            cost_limits.get("max")
         )
 
 
@@ -1077,8 +1063,12 @@ def validate_order_limits(
         )
 
 
+        # =====================================================
+        # MIN AMOUNT
+        # =====================================================
+
         if (
-            min_amount
+            min_amount is not None
             and amount < float(min_amount)
         ):
 
@@ -1086,15 +1076,39 @@ def validate_order_limits(
                 False,
                 (
                     f"Order amount "
-                    f"{amount} is below "
+                    f"{amount:.12f} is below "
                     f"exchange minimum "
-                    f"{min_amount}"
-                )
+                    f"{float(min_amount):.12f}"
+                ),
             )
 
 
+        # =====================================================
+        # MAX AMOUNT
+        # =====================================================
+
         if (
-            min_cost
+            max_amount is not None
+            and amount > float(max_amount)
+        ):
+
+            return (
+                False,
+                (
+                    f"Order amount "
+                    f"{amount:.12f} exceeds "
+                    f"exchange maximum "
+                    f"{float(max_amount):.12f}"
+                ),
+            )
+
+
+        # =====================================================
+        # MIN COST
+        # =====================================================
+
+        if (
+            min_cost is not None
             and order_cost < float(min_cost)
         ):
 
@@ -1102,11 +1116,30 @@ def validate_order_limits(
                 False,
                 (
                     f"Order value "
-                    f"${order_cost:.2f} "
-                    f"is below exchange "
-                    f"minimum "
-                    f"${min_cost:.2f}"
-                )
+                    f"${order_cost:.8f} is below "
+                    f"exchange minimum "
+                    f"${float(min_cost):.8f}"
+                ),
+            )
+
+
+        # =====================================================
+        # MAX COST
+        # =====================================================
+
+        if (
+            max_cost is not None
+            and order_cost > float(max_cost)
+        ):
+
+            return (
+                False,
+                (
+                    f"Order value "
+                    f"${order_cost:.8f} exceeds "
+                    f"exchange maximum "
+                    f"${float(max_cost):.8f}"
+                ),
             )
 
 
@@ -1119,9 +1152,204 @@ def validate_order_limits(
             False,
             (
                 "Unable to validate "
-                f"market limits: {str(e)}"
+                f"market limits: "
+                f"{type(e).__name__}: {str(e)}"
+            ),
+        )
+
+
+# ============================================================
+# HELPER: SAFE FLOAT
+# ============================================================
+
+def safe_float(
+    value,
+    default=0.0,
+):
+
+    try:
+
+        if value is None:
+
+            return default
+
+        return float(value)
+
+    except Exception:
+
+        return default
+
+
+# ============================================================
+# HELPER: GET ACTUAL FILLED AMOUNT
+# ============================================================
+
+def get_filled_amount(
+    exchange,
+    symbol,
+    order,
+    fallback_amount,
+):
+
+    filled = safe_float(
+        order.get("filled"),
+        0.0,
+    )
+
+    if filled > 0:
+
+        return filled
+
+
+    # ========================================================
+    # FETCH ORDER STATUS
+    # ========================================================
+
+    order_id = order.get("id")
+
+    if order_id:
+
+        try:
+
+            time.sleep(1)
+
+            updated = (
+                exchange.fetch_order(
+                    order_id,
+                    symbol,
+                )
+            )
+
+            filled = safe_float(
+                updated.get("filled"),
+                0.0,
+            )
+
+            if filled > 0:
+
+                return filled
+
+        except Exception:
+
+            pass
+
+
+    return fallback_amount
+
+
+# ============================================================
+# HELPER: GET ACTUAL FEE FROM ORDER
+# ============================================================
+
+def get_order_fee(
+    order,
+    fallback_cost,
+    fee_pct,
+):
+
+    # ========================================================
+    # CCXT UNIFIED FEE
+    # ========================================================
+
+    fee = order.get("fee")
+
+    if isinstance(
+        fee,
+        dict,
+    ):
+
+        cost = safe_float(
+            fee.get("cost"),
+            0.0,
+        )
+
+        if cost > 0:
+
+            return cost
+
+
+    # ========================================================
+    # CCXT FEES LIST
+    # ========================================================
+
+    fees = order.get("fees")
+
+    if isinstance(
+        fees,
+        list,
+    ):
+
+        total = 0.0
+
+        for item in fees:
+
+            if isinstance(
+                item,
+                dict,
+            ):
+
+                total += safe_float(
+                    item.get("cost"),
+                    0.0,
+                )
+
+        if total > 0:
+
+            return total
+
+
+    # ========================================================
+    # FALLBACK
+    # ========================================================
+
+    return (
+        fallback_cost * fee_pct
+    )
+
+
+# ============================================================
+# HELPER: MARKET BUY
+# ============================================================
+
+def submit_market_buy(
+    exchange,
+    symbol,
+    amount,
+    reference_price,
+):
+
+    try:
+
+        requires_price = (
+            exchange.options.get(
+                "createMarketBuyOrderRequiresPrice",
+                False,
             )
         )
+
+
+        if requires_price:
+
+            return exchange.create_order(
+                symbol,
+                "market",
+                "buy",
+                amount,
+                reference_price,
+            )
+
+
+        return (
+            exchange.create_market_buy_order(
+                symbol,
+                amount,
+            )
+        )
+
+
+    except ccxt.InvalidOrder:
+
+        raise
 
 
 # ============================================================
@@ -1133,12 +1361,154 @@ def execute_live_real_trade(
     sell_exchange_name,
     buy_price,
     sell_price,
-    trade_amount=1000.0
+    trade_amount=None,
 ):
 
-    # --------------------------------------------------------
-    # 1. LOAD BUY EXCHANGE
-    # --------------------------------------------------------
+    print(
+        "\n=================================================="
+    )
+
+    print(
+        "LIVE TRADE VALIDATION / EXECUTION"
+    )
+
+    print(
+        "=================================================="
+    )
+
+
+    # ========================================================
+    # 0. BASIC VALIDATION
+    # ========================================================
+
+    if (
+        buy_exchange_name
+        == sell_exchange_name
+    ):
+
+        return {
+            "success": False,
+            "message": (
+                "BUY and SELL exchanges "
+                "must be different."
+            ),
+        }
+
+
+    supported_exchanges = getattr(
+        config,
+        "SUPPORTED_EXCHANGES",
+        [
+            "Binance",
+            "Bybit",
+        ],
+    )
+
+
+    if (
+        buy_exchange_name
+        not in supported_exchanges
+    ):
+
+        return {
+            "success": False,
+            "message": (
+                f"Unsupported BUY exchange: "
+                f"{buy_exchange_name}"
+            ),
+        }
+
+
+    if (
+        sell_exchange_name
+        not in supported_exchanges
+    ):
+
+        return {
+            "success": False,
+            "message": (
+                f"Unsupported SELL exchange: "
+                f"{sell_exchange_name}"
+            ),
+        }
+
+
+    buy_price = safe_float(
+        buy_price,
+        0.0,
+    )
+
+    sell_price = safe_float(
+        sell_price,
+        0.0,
+    )
+
+
+    if (
+        buy_price <= 0
+        or sell_price <= 0
+    ):
+
+        return {
+            "success": False,
+            "message": (
+                "Invalid BUY/SELL price."
+            ),
+        }
+
+
+    # ========================================================
+    # 1. LIVE TRADING ARM CHECK
+    # ========================================================
+
+    live_armed = bool(
+        getattr(
+            config,
+            "LIVE_TRADING_ARMED",
+            False,
+        )
+    )
+
+    auto_trade = bool(
+        getattr(
+            config,
+            "AUTO_TRADE_ENABLED",
+            False,
+        )
+    )
+
+
+    print(
+        f"LIVE_TRADING_ARMED = "
+        f"{live_armed}"
+    )
+
+    print(
+        f"AUTO_TRADE_ENABLED = "
+        f"{auto_trade}"
+    )
+
+
+    # ========================================================
+    # SAFETY
+    # ========================================================
+
+    if not live_armed:
+
+        return {
+            "success": False,
+            "armed": False,
+            "message": (
+                "REAL ORDER BLOCKED. "
+                "LIVE_TRADING_ARMED is False. "
+                "No order was submitted."
+            ),
+        }
+
+
+    # ========================================================
+    # 2. LOAD BUY EXCHANGE
+    # ========================================================
 
     buy_ex, buy_err = (
         get_authenticated_exchange(
@@ -1151,13 +1521,16 @@ def execute_live_real_trade(
 
         return {
             "success": False,
-            "message": buy_err
+            "message": (
+                f"BUY exchange error: "
+                f"{buy_err}"
+            ),
         }
 
 
-    # --------------------------------------------------------
-    # 2. LOAD SELL EXCHANGE
-    # --------------------------------------------------------
+    # ========================================================
+    # 3. LOAD SELL EXCHANGE
+    # ========================================================
 
     sell_ex, sell_err = (
         get_authenticated_exchange(
@@ -1170,25 +1543,96 @@ def execute_live_real_trade(
 
         return {
             "success": False,
-            "message": sell_err
+            "message": (
+                f"SELL exchange error: "
+                f"{sell_err}"
+            ),
         }
 
 
-    # --------------------------------------------------------
-    # 3. LOAD MARKETS
-    # --------------------------------------------------------
+    # ========================================================
+    # 4. VERIFY / LOAD MARKETS
+    # ========================================================
 
     try:
 
-        buy_ex.load_markets()
-        sell_ex.load_markets()
+        # ----------------------------------------------------
+        # BUY EXCHANGE MARKETS
+        # ----------------------------------------------------
 
+        if not getattr(
+            buy_ex,
+            "markets",
+            None,
+        ):
 
-        base_currency, quote_currency = (
-            get_symbol_currencies(
-                SYMBOL
+            print(
+                f"Loading markets for "
+                f"{buy_exchange_name}...",
+                flush=True,
             )
-        )
+
+            buy_ex.load_markets()
+
+
+        # ----------------------------------------------------
+        # SELL EXCHANGE MARKETS
+        # ----------------------------------------------------
+
+        if not getattr(
+            sell_ex,
+            "markets",
+            None,
+        ):
+
+            print(
+                f"Loading markets for "
+                f"{sell_exchange_name}...",
+                flush=True,
+            )
+
+            sell_ex.load_markets()
+
+
+        # ----------------------------------------------------
+        # CHECK BUY SYMBOL
+        # ----------------------------------------------------
+
+        if SYMBOL not in buy_ex.markets:
+
+            return {
+                "success": False,
+                "message": (
+                    f"{SYMBOL} is not available "
+                    f"on {buy_exchange_name}."
+                ),
+            }
+
+
+        # ----------------------------------------------------
+        # CHECK SELL SYMBOL
+        # ----------------------------------------------------
+
+        if SYMBOL not in sell_ex.markets:
+
+            return {
+                "success": False,
+                "message": (
+                    f"{SYMBOL} is not available "
+                    f"on {sell_exchange_name}."
+                ),
+            }
+
+
+    except ccxt.NetworkError as e:
+
+        return {
+            "success": False,
+            "message": (
+                f"Unable to load markets: "
+                f"{type(e).__name__}: {str(e)}"
+            ),
+        }
 
 
     except Exception as e:
@@ -1196,15 +1640,39 @@ def execute_live_real_trade(
         return {
             "success": False,
             "message": (
-                "Unable to load market "
-                f"information: {str(e)}"
-            )
+                f"Market verification failed: "
+                f"{type(e).__name__}: {str(e)}"
+            ),
         }
 
 
-    # --------------------------------------------------------
-    # 4. FETCH ACTUAL BALANCES
-    # --------------------------------------------------------
+    # ========================================================
+    # 5. CURRENCIES
+    # ========================================================
+
+    try:
+
+        (
+            base_currency,
+            quote_currency,
+        ) = get_symbol_currencies(
+            SYMBOL
+        )
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "message": (
+                f"Invalid symbol {SYMBOL}: "
+                f"{str(e)}"
+            ),
+        }
+
+
+    # ========================================================
+    # 6. FETCH REAL BALANCES
+    # ========================================================
 
     try:
 
@@ -1212,127 +1680,66 @@ def execute_live_real_trade(
             buy_ex.fetch_balance()
         )
 
-
         sell_balance = (
             sell_ex.fetch_balance()
         )
 
 
-        free_usdt = float(
-            buy_balance
-            .get("free", {})
-            .get(
+        buy_free = (
+            buy_balance.get(
+                "free",
+                {},
+            )
+            or {}
+        )
+
+        sell_free = (
+            sell_balance.get(
+                "free",
+                {},
+            )
+            or {}
+        )
+
+
+        free_usdt = safe_float(
+            buy_free.get(
                 quote_currency,
-                0.0
-            )
-            or 0.0
+                0.0,
+            ),
+            0.0,
         )
 
 
-        free_btc = float(
-            sell_balance
-            .get("free", {})
-            .get(
+        free_btc = safe_float(
+            sell_free.get(
                 base_currency,
-                0.0
-            )
-            or 0.0
+                0.0,
+            ),
+            0.0,
         )
 
 
-        min_required = float(
-            getattr(
-                config,
-                "MIN_TRADE_USDT",
-                5.0
-            )
-        )
+    except ccxt.AuthenticationError as e:
+
+        return {
+            "success": False,
+            "message": (
+                f"Authentication failed: "
+                f"{str(e)}"
+            ),
+        }
 
 
-        # ----------------------------------------------------
-        # BUY BALANCE CHECK
-        # ----------------------------------------------------
+    except ccxt.PermissionDenied as e:
 
-        if free_usdt < min_required:
-
-            return {
-                "success": False,
-                "message": (
-                    f"Insufficient "
-                    f"{quote_currency} "
-                    f"on {buy_exchange_name}. "
-                    f"Minimum required: "
-                    f"{min_required:.2f}. "
-                    f"Available: "
-                    f"{free_usdt:.2f}"
-                )
-            }
-
-
-        # ----------------------------------------------------
-        # DYNAMIC TRADE SIZE
-        # ----------------------------------------------------
-
-        if getattr(
-            config,
-            "DYNAMIC_BALANCE_TRADING",
-                True
-        ):
-
-            max_usage = float(
-                getattr(
-                    config,
-                    "MAX_BALANCE_USAGE",
-                    0.90
-                )
-            )
-
-            max_from_balance = free_usdt * max_usage
-
-            trade_amount = min(
-                float(trade_amount),
-                max_from_balance
-            )
-
-
-        trade_amount = round(
-            trade_amount,
-            4
-        )
-
-
-        if trade_amount < min_required:
-
-            return {
-                "success": False,
-                "message": (
-                    f"Final trade amount "
-                    f"{trade_amount:.4f} "
-                    f"is below minimum "
-                    f"{min_required:.2f}"
-                )
-            }
-
-
-        print(
-            f"BUY BALANCE: "
-            f"{free_usdt:.4f} "
-            f"{quote_currency}"
-        )
-
-
-        print(
-            f"SELL BALANCE: "
-            f"{free_btc:.8f} "
-            f"{base_currency}"
-        )
-
-
-        print(
-            f"TRADE AMOUNT: "
-            f"{trade_amount:.4f} "
-            f"{quote_currency}"
-        )
+        return {
+            "success": False,
+            "message": (
+                f"Permission denied: "
+                f"{str(e)}"
+            ),
+        }
 
 
     except Exception as e:
@@ -1340,29 +1747,208 @@ def execute_live_real_trade(
         return {
             "success": False,
             "message": (
-                "Unable to verify "
-                f"balances: {str(e)}"
-            )
+                f"Unable to verify balances: "
+                f"{type(e).__name__}: "
+                f"{str(e)}"
+            ),
         }
 
 
-    # --------------------------------------------------------
-    # 5. CALCULATE BTC QUANTITY
-    # --------------------------------------------------------
+    print(
+        f"BUY EXCHANGE "
+        f"{buy_exchange_name}: "
+        f"{free_usdt:.8f} "
+        f"{quote_currency}"
+    )
+
+
+    print(
+        f"SELL EXCHANGE "
+        f"{sell_exchange_name}: "
+        f"{free_btc:.8f} "
+        f"{base_currency}"
+    )
+
+
+    # ========================================================
+    # 7. MINIMUM TRADE CONFIG
+    # ========================================================
+
+    min_trade = float(
+        getattr(
+            config,
+            "MIN_TRADE_USDT",
+            5.0,
+        )
+    )
+
+
+    max_trade = float(
+        getattr(
+            config,
+            "MAX_TRADE_AMOUNT_USDT",
+            5.0,
+        )
+    )
+
+
+    default_trade = float(
+        getattr(
+            config,
+            "DEFAULT_TRADE_AMOUNT",
+            5.0,
+        )
+    )
+
+
+    if trade_amount is None:
+
+        trade_amount = default_trade
+
+
+    trade_amount = safe_float(
+        trade_amount,
+        default_trade,
+    )
+
+
+    # Never exceed configured maximum.
+
+    trade_amount = min(
+        trade_amount,
+        max_trade,
+    )
+
+
+    # ========================================================
+    # 8. BUY USDT BALANCE CHECK
+    # ========================================================
+
+    if free_usdt < min_trade:
+
+        return {
+            "success": False,
+            "message": (
+                f"Insufficient "
+                f"{quote_currency} "
+                f"on {buy_exchange_name}. "
+                f"Minimum required: "
+                f"${min_trade:.4f}. "
+                f"Available: "
+                f"${free_usdt:.8f}."
+            ),
+        }
+
+
+    # ========================================================
+    # 9. DYNAMIC BALANCE TRADING
+    # ========================================================
+
+    dynamic_balance = bool(
+        getattr(
+            config,
+            "DYNAMIC_BALANCE_TRADING",
+            True,
+        )
+    )
+
+
+    if dynamic_balance:
+
+        max_usage = float(
+            getattr(
+                config,
+                "MAX_BALANCE_USAGE",
+                0.90,
+            )
+        )
+
+
+        max_from_balance = (
+            free_usdt
+            * max_usage
+        )
+
+
+        trade_amount = min(
+            trade_amount,
+            max_from_balance,
+        )
+
+
+    # Never exceed free balance.
+
+    trade_amount = min(
+        trade_amount,
+        free_usdt,
+    )
+
+
+    # ========================================================
+    # 10. ROUND TRADE AMOUNT
+    # ========================================================
 
     try:
 
-        raw_amount = (
-            trade_amount /
-            float(buy_price)
+        trade_amount = float(
+            buy_ex.cost_to_precision(
+                SYMBOL,
+                trade_amount,
+            )
+        )
+
+    except Exception:
+
+        trade_amount = round(
+            trade_amount,
+            8,
+        )
+
+
+    if trade_amount < min_trade:
+
+        return {
+            "success": False,
+            "message": (
+                f"Final trade amount "
+                f"${trade_amount:.8f} is below "
+                f"configured minimum "
+                f"${min_trade:.8f}. "
+                f"Available balance: "
+                f"${free_usdt:.8f}."
+            ),
+        }
+
+
+    print(
+        f"TRADE AMOUNT: "
+        f"${trade_amount:.8f} "
+        f"{quote_currency}"
+    )
+
+
+    # ========================================================
+    # 11. CALCULATE BASE QUANTITY
+    # ========================================================
+
+    raw_amount = (
+        trade_amount
+        / buy_price
+    )
+
+
+    try:
+
+        btc_amount_str = (
+            buy_ex.amount_to_precision(
+                SYMBOL,
+                raw_amount,
+            )
         )
 
 
         btc_amount = float(
-            buy_ex.amount_to_precision(
-                SYMBOL,
-                raw_amount
-            )
+            btc_amount_str
         )
 
 
@@ -1371,9 +1957,11 @@ def execute_live_real_trade(
         return {
             "success": False,
             "message": (
-                "Unable to calculate "
-                f"order quantity: {str(e)}"
-            )
+                f"Unable to calculate "
+                f"order quantity: "
+                f"{type(e).__name__}: "
+                f"{str(e)}"
+            ),
         }
 
 
@@ -1382,50 +1970,118 @@ def execute_live_real_trade(
         return {
             "success": False,
             "message": (
-                "Calculated order "
-                "quantity is zero."
-            )
+                "Calculated BTC quantity "
+                "is zero."
+            ),
         }
 
 
-    # --------------------------------------------------------
-    # 6. SELL BTC BALANCE CHECK
-    # --------------------------------------------------------
-
-    required_btc = (
-        btc_amount * 1.001
+    print(
+        f"CALCULATED BTC: "
+        f"{btc_amount:.12f}"
     )
 
 
-    if free_btc < required_btc:
+    # ========================================================
+    # 12. SELL-SIDE BTC BALANCE CHECK
+    # ========================================================
+    #
+    # Cross-exchange arbitrage does NOT automatically
+    # transfer BTC between exchanges.
+    #
+    # BTC must already exist on SELL exchange.
+    #
+    # ========================================================
+
+    if free_btc <= 0:
 
         return {
             "success": False,
             "message": (
-                f"SELL BLOCKED. "
-                f"Insufficient "
-                f"{base_currency} "
-                f"on {sell_exchange_name}. "
-                f"Required approximately: "
-                f"{required_btc:.8f} "
+                f"TRADE BLOCKED. "
+                f"{sell_exchange_name} has "
+                f"0 available "
                 f"{base_currency}. "
-                f"Available: "
-                f"{free_btc:.8f} "
-                f"{base_currency}."
-            )
+                f"BTC must already be present "
+                f"on the SELL exchange."
+            ),
         }
 
 
-    # --------------------------------------------------------
-    # 7. BUY MINIMUM ORDER
-    # --------------------------------------------------------
+    if free_btc < btc_amount:
+
+        return {
+            "success": False,
+            "message": (
+                f"TRADE BLOCKED. "
+                f"SELL exchange has only "
+                f"{free_btc:.12f} BTC, "
+                f"but approximately "
+                f"{btc_amount:.12f} BTC "
+                f"is required."
+            ),
+        }
+
+
+    # ========================================================
+    # 13. SELL AMOUNT PRECISION
+    # ========================================================
+
+    try:
+
+        sell_btc_amount = float(
+            sell_ex.amount_to_precision(
+                SYMBOL,
+                btc_amount,
+            )
+        )
+
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "message": (
+                f"SELL quantity precision "
+                f"failed: {str(e)}"
+            ),
+        }
+
+
+    if sell_btc_amount <= 0:
+
+        return {
+            "success": False,
+            "message": (
+                "SELL BTC quantity became "
+                "zero after exchange "
+                "precision."
+            ),
+        }
+
+
+    if free_btc < sell_btc_amount:
+
+        return {
+            "success": False,
+            "message": (
+                f"Insufficient BTC on "
+                f"{sell_exchange_name} after "
+                f"precision adjustment."
+            ),
+        }
+
+
+    # ========================================================
+    # 14. ORDER LIMIT CHECK - BUY
+    # ========================================================
 
     buy_valid, buy_message = (
         validate_order_limits(
             buy_ex,
             SYMBOL,
             btc_amount,
-            buy_price
+            buy_price,
         )
     )
 
@@ -1437,20 +2093,20 @@ def execute_live_real_trade(
             "message": (
                 f"BUY BLOCKED: "
                 f"{buy_message}"
-            )
+            ),
         }
 
 
-    # --------------------------------------------------------
-    # 8. SELL MINIMUM ORDER
-    # --------------------------------------------------------
+    # ========================================================
+    # 15. ORDER LIMIT CHECK - SELL
+    # ========================================================
 
     sell_valid, sell_message = (
         validate_order_limits(
             sell_ex,
             SYMBOL,
-            btc_amount,
-            sell_price
+            sell_btc_amount,
+            sell_price,
         )
     )
 
@@ -1462,102 +2118,238 @@ def execute_live_real_trade(
             "message": (
                 f"SELL BLOCKED: "
                 f"{sell_message}"
-            )
+            ),
         }
 
 
-    # --------------------------------------------------------
-    # 9. PROFIT CHECK
-    # --------------------------------------------------------
+    # ========================================================
+    # 16. PROFIT CALCULATION
+    # ========================================================
 
     fee_pct = float(
         getattr(
             config,
-            "MAKER_TAKER_FEE_PCT",
-            0.05
+            "ESTIMATED_FEE_PERCENT",
+            getattr(
+                config,
+                "MAKER_TAKER_FEE_PCT",
+                0.10,
+            ),
         )
-    ) / 100
+    ) / 100.0
 
 
-    estimated_buy_fee = (
-        trade_amount * fee_pct
+    slippage_pct = float(
+        getattr(
+            config,
+            "SLIPPAGE_PCT",
+            0.0,
+        )
+    ) / 100.0
+
+
+    # Conservative estimate.
+
+    estimated_buy_price = (
+        buy_price
+        * (1.0 + slippage_pct)
+    )
+
+
+    estimated_sell_price = (
+        sell_price
+        * (1.0 - slippage_pct)
+    )
+
+
+    estimated_buy_cost = (
+        btc_amount
+        * estimated_buy_price
     )
 
 
     estimated_sell_value = (
-        btc_amount *
-        float(sell_price)
+        sell_btc_amount
+        * estimated_sell_price
+    )
+
+
+    estimated_buy_fee = (
+        estimated_buy_cost
+        * fee_pct
     )
 
 
     estimated_sell_fee = (
-        estimated_sell_value *
-        fee_pct
+        estimated_sell_value
+        * fee_pct
     )
 
 
-    estimated_profit = (
+    estimated_net_profit = (
         estimated_sell_value
-        - trade_amount
+        - estimated_buy_cost
         - estimated_buy_fee
         - estimated_sell_fee
     )
+
+
+    estimated_profit_percent = 0.0
+
+
+    if estimated_buy_cost > 0:
+
+        estimated_profit_percent = (
+            estimated_net_profit
+            / estimated_buy_cost
+        ) * 100.0
 
 
     min_profit = float(
         getattr(
             config,
             "MIN_PROFIT",
-            0.01
+            0.05,
         )
     )
 
 
-    if estimated_profit < min_profit:
+    min_profit_percent = float(
+        getattr(
+            config,
+            "MIN_PROFIT_PERCENT",
+            0.20,
+        )
+    )
+
+
+    print(
+        f"Estimated Net Profit: "
+        f"${estimated_net_profit:.8f}"
+    )
+
+
+    print(
+        f"Estimated Profit %: "
+        f"{estimated_profit_percent:.4f}%"
+    )
+
+
+    # ========================================================
+    # 17. PROFIT CHECK
+    # ========================================================
+
+    if estimated_net_profit < min_profit:
 
         return {
             "success": False,
             "message": (
                 f"TRADE BLOCKED. "
                 f"Estimated net profit "
-                f"${estimated_profit:.4f} "
+                f"${estimated_net_profit:.8f} "
                 f"is below minimum "
-                f"${min_profit:.4f}"
-            )
+                f"${min_profit:.8f}."
+            ),
         }
 
 
+    if (
+        estimated_profit_percent
+        < min_profit_percent
+    ):
+
+        return {
+            "success": False,
+            "message": (
+                f"TRADE BLOCKED. "
+                f"Estimated profit "
+                f"{estimated_profit_percent:.4f}% "
+                f"is below minimum "
+                f"{min_profit_percent:.4f}%."
+            ),
+        }
+
+
+    # ========================================================
+    # 18. FINAL PRE-ORDER SAFETY
+    # ========================================================
+
     print(
-        f"Estimated Net Profit: "
-        f"${estimated_profit:.4f}"
+        "\n⚠️ FINAL LIVE ORDER CHECK"
+    )
+
+    print(
+        f"BUY  : {buy_exchange_name}"
+    )
+
+    print(
+        f"SELL : {sell_exchange_name}"
+    )
+
+    print(
+        f"SYMBOL: {SYMBOL}"
+    )
+
+    print(
+        f"BUY PRICE: {buy_price:.8f}"
+    )
+
+    print(
+        f"SELL PRICE: {sell_price:.8f}"
+    )
+
+    print(
+        f"TRADE VALUE: "
+        f"${trade_amount:.8f}"
+    )
+
+    print(
+        f"BTC: {btc_amount:.12f}"
+    )
+
+    print(
+        f"EST. PROFIT: "
+        f"${estimated_net_profit:.8f}"
     )
 
 
-    # --------------------------------------------------------
-    # 10. LIVE BUY
-    # --------------------------------------------------------
+    # ========================================================
+    # 19. LIVE BUY
+    # ========================================================
+
+    buy_order = None
+    buy_order_id = None
+
 
     try:
 
         print(
-            f"Submitting LIVE BUY "
-            f"on {buy_exchange_name}: "
-            f"{btc_amount:.8f} "
-            f"{base_currency}"
+            "\n🚨 SUBMITTING LIVE BUY..."
         )
 
 
-        buy_order = (
-            buy_ex.create_market_buy_order(
-                SYMBOL,
-                btc_amount
-            )
+        buy_order = submit_market_buy(
+            buy_ex,
+            SYMBOL,
+            btc_amount,
+            buy_price,
         )
 
 
         buy_order_id = (
             buy_order.get("id")
-            or f"LIVE-BUY-{int(time.time())}"
+            or
+            f"LIVE-BUY-{int(time.time())}"
+        )
+
+
+        print(
+            "✅ BUY ORDER SUBMITTED"
+        )
+
+        print(
+            f"BUY ORDER ID: "
+            f"{buy_order_id}"
         )
 
 
@@ -1567,10 +2359,22 @@ def execute_live_real_trade(
             "success": False,
             "message": (
                 f"BUY FAILED: "
-                f"Insufficient funds "
+                f"Insufficient funds on "
+                f"{buy_exchange_name}: "
+                f"{str(e)}"
+            ),
+        }
+
+
+    except ccxt.InvalidOrder as e:
+
+        return {
+            "success": False,
+            "message": (
+                f"BUY FAILED: Invalid order "
                 f"on {buy_exchange_name}: "
                 f"{str(e)}"
-            )
+            ),
         }
 
 
@@ -1581,36 +2385,61 @@ def execute_live_real_trade(
             "message": (
                 f"BUY FAILED on "
                 f"{buy_exchange_name}: "
+                f"{type(e).__name__}: "
                 f"{str(e)}"
-            )
+            ),
         }
 
 
-    # --------------------------------------------------------
-    # 11. LIVE SELL
-    # --------------------------------------------------------
+    # ========================================================
+    # 20. GET ACTUAL BUY FILL
+    # ========================================================
+
+    actual_bought_btc = (
+        get_filled_amount(
+            buy_ex,
+            SYMBOL,
+            buy_order,
+            btc_amount,
+        )
+    )
+
+
+    if actual_bought_btc <= 0:
+
+        return {
+            "success": False,
+            "message": (
+                f"BUY order "
+                f"{buy_order_id} "
+                f"was submitted, but filled "
+                f"quantity could not be "
+                f"confirmed. "
+                f"DO NOT submit another BUY "
+                f"manually without checking "
+                f"the exchange order."
+            ),
+            "buy_order_id":
+                buy_order_id,
+        }
+
+
+    # ========================================================
+    # 21. SELL ACTUAL FILLED QUANTITY
+    # ========================================================
 
     try:
 
-        print(
-            f"Submitting LIVE SELL "
-            f"on {sell_exchange_name}: "
-            f"{btc_amount:.8f} "
-            f"{base_currency}"
-        )
-
-
-        sell_order = (
-            sell_ex.create_market_sell_order(
+        sell_amount_str = (
+            sell_ex.amount_to_precision(
                 SYMBOL,
-                btc_amount
+                actual_bought_btc,
             )
         )
 
 
-        sell_order_id = (
-            sell_order.get("id")
-            or f"LIVE-SELL-{int(time.time())}"
+        actual_sell_amount = float(
+            sell_amount_str
         )
 
 
@@ -1619,76 +2448,269 @@ def execute_live_real_trade(
         return {
             "success": False,
             "message": (
-                f"WARNING: BUY ORDER "
-                f"SUCCEEDED on "
-                f"{buy_exchange_name} "
-                f"(ID: {buy_order_id}), "
-                f"but SELL FAILED on "
-                f"{sell_exchange_name}: "
-                f"{str(e)}"
+                f"BUY succeeded "
+                f"(ID: {buy_order_id}) but "
+                f"SELL quantity formatting "
+                f"failed: {str(e)}. "
+                f"Manual position review "
+                f"required."
             ),
-            "buy_order_id": buy_order_id,
-            "btc_amount": btc_amount
+            "buy_order_id":
+                buy_order_id,
+            "btc_amount":
+                actual_bought_btc,
         }
 
 
-    # --------------------------------------------------------
-    # 12. ACTUAL ORDER VALUES
-    # --------------------------------------------------------
+    if actual_sell_amount <= 0:
 
-    effective_buy_price = float(
-        buy_order.get("average")
-        or buy_order.get("price")
-        or buy_price
-    )
+        return {
+            "success": False,
+            "message": (
+                f"BUY succeeded "
+                f"(ID: {buy_order_id}) but "
+                f"SELL quantity became zero. "
+                f"Manual position review "
+                f"required."
+            ),
+            "buy_order_id":
+                buy_order_id,
+            "btc_amount":
+                actual_bought_btc,
+        }
 
 
-    effective_sell_price = float(
-        sell_order.get("average")
-        or sell_order.get("price")
-        or sell_price
-    )
+    # ========================================================
+    # RE-CHECK SELL WALLET
+    # ========================================================
 
+    try:
 
-    actual_buy_cost = float(
-        buy_order.get("cost")
-        or (
-            btc_amount *
-            effective_buy_price
+        latest_sell_balance = (
+            sell_ex.fetch_balance()
         )
-    )
 
 
-    actual_sell_value = float(
-        sell_order.get("cost")
-        or (
-            btc_amount *
-            effective_sell_price
+        latest_sell_free = (
+            latest_sell_balance
+            .get(
+                "free",
+                {},
+            )
+            or {}
         )
+
+
+        latest_free_btc = safe_float(
+            latest_sell_free.get(
+                base_currency,
+                0.0,
+            ),
+            0.0,
+        )
+
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "message": (
+                f"BUY succeeded "
+                f"(ID: {buy_order_id}) but "
+                f"SELL balance re-check "
+                f"failed: {str(e)}. "
+                f"SELL was NOT submitted."
+            ),
+            "buy_order_id":
+                buy_order_id,
+            "btc_amount":
+                actual_bought_btc,
+        }
+
+
+    if (
+        latest_free_btc
+        < actual_sell_amount
+    ):
+
+        return {
+            "success": False,
+            "message": (
+                f"BUY succeeded "
+                f"(ID: {buy_order_id}) but "
+                f"SELL exchange has "
+                f"insufficient BTC. "
+                f"Required: "
+                f"{actual_sell_amount:.12f}, "
+                f"Available: "
+                f"{latest_free_btc:.12f}. "
+                f"SELL was NOT submitted."
+            ),
+            "buy_order_id":
+                buy_order_id,
+            "btc_amount":
+                actual_bought_btc,
+        }
+
+
+    # ========================================================
+    # 22. LIVE SELL
+    # ========================================================
+
+    sell_order = None
+    sell_order_id = None
+
+
+    try:
+
+        print(
+            "\n🚨 SUBMITTING LIVE SELL..."
+        )
+
+
+        print(
+            f"SELL QUANTITY: "
+            f"{actual_sell_amount:.12f} BTC"
+        )
+
+
+        sell_order = (
+            sell_ex.create_market_sell_order(
+                SYMBOL,
+                actual_sell_amount,
+            )
+        )
+
+
+        sell_order_id = (
+            sell_order.get("id")
+            or
+            f"LIVE-SELL-{int(time.time())}"
+        )
+
+
+        print(
+            "✅ SELL ORDER SUBMITTED"
+        )
+
+
+        print(
+            f"SELL ORDER ID: "
+            f"{sell_order_id}"
+        )
+
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "message": (
+                "🚨 CRITICAL: BUY ORDER "
+                f"SUCCEEDED on "
+                f"{buy_exchange_name} "
+                f"(ID: {buy_order_id}), "
+                "but SELL FAILED on "
+                f"{sell_exchange_name}. "
+                f"Error: "
+                f"{type(e).__name__}: "
+                f"{str(e)}. "
+                "Manual position review "
+                "required."
+            ),
+            "buy_order_id":
+                buy_order_id,
+            "btc_amount":
+                actual_bought_btc,
+        }
+
+
+    # ========================================================
+    # 23. ACTUAL ORDER VALUES
+    # ========================================================
+
+    effective_buy_price = safe_float(
+        buy_order.get("average"),
+        0.0,
     )
 
 
-    # --------------------------------------------------------
-    # 13. FEES
-    # --------------------------------------------------------
+    if effective_buy_price <= 0:
 
-    buy_fee = (
-        actual_buy_cost *
-        fee_pct
+        effective_buy_price = safe_float(
+            buy_order.get("price"),
+            buy_price,
+        )
+
+
+    effective_sell_price = safe_float(
+        sell_order.get("average"),
+        0.0,
     )
 
 
-    sell_fee = (
-        actual_sell_value *
-        fee_pct
+    if effective_sell_price <= 0:
+
+        effective_sell_price = safe_float(
+            sell_order.get("price"),
+            sell_price,
+        )
+
+
+    actual_buy_cost = safe_float(
+        buy_order.get("cost"),
+        0.0,
+    )
+
+
+    if actual_buy_cost <= 0:
+
+        actual_buy_cost = (
+            actual_bought_btc
+            * effective_buy_price
+        )
+
+
+    actual_sell_value = safe_float(
+        sell_order.get("cost"),
+        0.0,
+    )
+
+
+    if actual_sell_value <= 0:
+
+        actual_sell_value = (
+            actual_sell_amount
+            * effective_sell_price
+        )
+
+
+    # ========================================================
+    # 24. ACTUAL FEES
+    # ========================================================
+
+    buy_fee = get_order_fee(
+        buy_order,
+        actual_buy_cost,
+        fee_pct,
+    )
+
+
+    sell_fee = get_order_fee(
+        sell_order,
+        actual_sell_value,
+        fee_pct,
     )
 
 
     total_fees = (
-        buy_fee +
-        sell_fee
+        buy_fee
+        + sell_fee
     )
 
+
+    # ========================================================
+    # 25. NET PROFIT
+    # ========================================================
 
     net_profit = (
         actual_sell_value
@@ -1697,13 +2719,72 @@ def execute_live_real_trade(
     )
 
 
-    # --------------------------------------------------------
-    # 14. SUCCESS
-    # --------------------------------------------------------
+    actual_profit_percent = 0.0
+
+
+    if actual_buy_cost > 0:
+
+        actual_profit_percent = (
+            net_profit
+            / actual_buy_cost
+        ) * 100.0
+
+
+    print(
+        "\n=================================================="
+    )
+
+    print(
+        "✅ LIVE TRADE COMPLETED"
+    )
+
+    print(
+        f"BUY  : {buy_exchange_name}"
+    )
+
+    print(
+        f"SELL : {sell_exchange_name}"
+    )
+
+    print(
+        f"BUY COST: "
+        f"${actual_buy_cost:.8f}"
+    )
+
+    print(
+        f"SELL VALUE: "
+        f"${actual_sell_value:.8f}"
+    )
+
+    print(
+        f"FEES: "
+        f"${total_fees:.8f}"
+    )
+
+    print(
+        f"NET PROFIT: "
+        f"${net_profit:.8f}"
+    )
+
+    print(
+        f"NET PROFIT %: "
+        f"{actual_profit_percent:.6f}%"
+    )
+
+    print(
+        "=================================================="
+    )
+
+
+    # ========================================================
+    # 26. SUCCESS RESPONSE
+    # ========================================================
 
     return {
 
         "success": True,
+
+        "armed": True,
 
         "message": (
             "LIVE TRADE EXECUTED "
@@ -1714,15 +2795,20 @@ def execute_live_real_trade(
 
         "trade": {
 
-            "buy": buy_exchange_name,
+            "buy":
+                buy_exchange_name,
 
-            "sell": sell_exchange_name,
+            "sell":
+                sell_exchange_name,
 
             "buy_exchange":
                 buy_exchange_name,
 
             "sell_exchange":
                 sell_exchange_name,
+
+            "symbol":
+                SYMBOL,
 
             "buy_price":
                 float(buy_price),
@@ -1736,22 +2822,58 @@ def execute_live_real_trade(
             "effective_sell_price":
                 effective_sell_price,
 
+            "actual_buy_cost":
+                round(
+                    actual_buy_cost,
+                    8,
+                ),
+
+            "actual_sell_value":
+                round(
+                    actual_sell_value,
+                    8,
+                ),
+
+            "buy_fee":
+                round(
+                    buy_fee,
+                    8,
+                ),
+
+            "sell_fee":
+                round(
+                    sell_fee,
+                    8,
+                ),
+
             "fees":
                 round(
                     total_fees,
-                    8
+                    8,
                 ),
 
             "profit":
                 round(
                     net_profit,
-                    8
+                    8,
+                ),
+
+            "profit_percent":
+                round(
+                    actual_profit_percent,
+                    8,
                 ),
 
             "estimated_profit":
                 round(
-                    estimated_profit,
-                    8
+                    estimated_net_profit,
+                    8,
+                ),
+
+            "estimated_profit_percent":
+                round(
+                    estimated_profit_percent,
+                    8,
                 ),
 
             "buy_order_id":
@@ -1761,7 +2883,10 @@ def execute_live_real_trade(
                 sell_order_id,
 
             "btc_amount":
-                btc_amount,
+                actual_bought_btc,
+
+            "sell_btc_amount":
+                actual_sell_amount,
 
             "trade_amount":
                 trade_amount,
@@ -1772,19 +2897,19 @@ def execute_live_real_trade(
                 .isoformat(),
 
             "mode":
-                "LIVE"
-        }
+                "LIVE",
+        },
     }
 
 
 # ============================================================
-# TEST
+# MAIN TEST
 # ============================================================
 
 if __name__ == "__main__":
 
     print(
-        "\n=============================="
+        "\n=============================================="
     )
 
     print(
@@ -1792,9 +2917,13 @@ if __name__ == "__main__":
     )
 
     print(
-        "==============================\n"
+        "==============================================\n"
     )
 
+
+    # ========================================================
+    # LIVE PRICES
+    # ========================================================
 
     prices = get_live_prices()
 
@@ -1805,17 +2934,28 @@ if __name__ == "__main__":
             "No exchange prices available."
         )
 
-    print(
-        "\n==============================\n"
-    )
 
+    # ========================================================
+    # API CONNECTION TEST
+    # ========================================================
+
+    print(
+        "\n=============================================="
+    )
 
     print(
         "===== API CONNECTION TEST ====="
     )
 
+    print(
+        "=============================================="
+    )
 
-    print("\nBinance:")
+
+    print(
+        "\nBinance:"
+    )
+
 
     print(
         test_exchange_connection(
@@ -1824,7 +2964,10 @@ if __name__ == "__main__":
     )
 
 
-    print("\nBybit:")
+    print(
+        "\nBybit:"
+    )
+
 
     print(
         test_exchange_connection(
@@ -1833,10 +2976,20 @@ if __name__ == "__main__":
     )
 
 
-
+    # ========================================================
+    # ACTUAL WALLET BALANCES
+    # ========================================================
 
     print(
-        "\n===== ACTUAL WALLET BALANCES ====="
+        "\n=============================================="
+    )
+
+    print(
+        "===== ACTUAL WALLET BALANCES ====="
+    )
+
+    print(
+        "=============================================="
     )
 
 
@@ -1845,11 +2998,42 @@ if __name__ == "__main__":
     )
 
 
-    for exchange, data in (
-        wallet_balances.items()
-    ):
+    for (
+        exchange_name,
+        data,
+    ) in wallet_balances.items():
 
         print(
-            f"{exchange}: "
+            f"{exchange_name}: "
             f"{data}"
         )
+
+
+    # ========================================================
+    # SAFETY STATUS
+    # ========================================================
+
+    print(
+        "\n=============================================="
+    )
+
+    print(
+        "===== LIVE TRADING SAFETY STATUS ====="
+    )
+
+    print(
+        "=============================================="
+    )
+
+
+    print(
+    f"LIVE_TRADING_ARMED: "
+    f"{getattr(config, 'LIVE_TRADING_ARMED', False)}"
+)
+
+print(
+    f"AUTO_TRADE_ENABLED: "
+    f"{getattr(config, 'AUTO_TRADE_ENABLED', False)}"
+)
+
+print("\nNo trade is executed by this test.")
