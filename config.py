@@ -69,6 +69,10 @@ LIVE_TRADING_ARMED = (
     os.getenv("LIVE_TRADING_ARMED", "false").lower() == "true"
 )
 
+# Emergency stop defaults to active and must be explicitly cleared before
+# any live order attempt is allowed.
+EMERGENCY_STOP = os.getenv("EMERGENCY_STOP", "true").lower() != "false"
+
 
 # ============================================================
 # TRADE SIZE

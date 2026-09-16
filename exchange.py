@@ -1311,6 +1311,13 @@ def get_order_fee(
 # HELPER: MARKET BUY
 # ============================================================
 
+class EmergencyStopError(RuntimeError):
+    pass
+
+
+def emergency_stop_active():
+    return bool(getattr(config, "EMERGENCY_STOP", True))
+
 def submit_market_buy(
     exchange,
     symbol,
@@ -1319,6 +1326,9 @@ def submit_market_buy(
 ):
 
     try:
+
+        if emergency_stop_active():
+            raise EmergencyStopError("Emergency stop is active before buy order")
 
         requires_price = (
             exchange.options.get(
@@ -1330,6 +1340,9 @@ def submit_market_buy(
 
         if requires_price:
 
+            if emergency_stop_active():
+                raise EmergencyStopError("Emergency stop is active before buy order")
+
             return exchange.create_order(
                 symbol,
                 "market",
@@ -1338,6 +1351,9 @@ def submit_market_buy(
                 reference_price,
             )
 
+
+        if emergency_stop_active():
+            raise EmergencyStopError("Emergency stop is active before buy order")
 
         return (
             exchange.create_market_buy_order(
@@ -1363,6 +1379,14 @@ def execute_live_real_trade(
     sell_price,
     trade_amount=None,
 ):
+
+    if emergency_stop_active():
+        return {
+            "success": False,
+            "status": "TRADE SKIPPED",
+            "skip_reason": "Emergency stop is active",
+            "message": "Emergency stop is active; no order was submitted.",
+        }
 
     print(
         "\n=================================================="
@@ -2323,6 +2347,14 @@ def execute_live_real_trade(
 
     try:
 
+        if emergency_stop_active():
+            return {
+                "success": False,
+                "status": "TRADE SKIPPED",
+                "skip_reason": "Emergency stop is active",
+                "message": "Emergency stop activated before buy order; no order was submitted.",
+            }
+
         print(
             "\n🚨 SUBMITTING LIVE BUY..."
         )
@@ -2352,6 +2384,14 @@ def execute_live_real_trade(
             f"{buy_order_id}"
         )
 
+
+    except EmergencyStopError as e:
+        return {
+            "success": False,
+            "status": "TRADE SKIPPED",
+            "skip_reason": "Emergency stop is active",
+            "message": str(e),
+        }
 
     except ccxt.InsufficientFunds as e:
 
@@ -2562,6 +2602,16 @@ def execute_live_real_trade(
 
 
     try:
+
+        if emergency_stop_active():
+            return {
+                "success": False,
+                "status": "TRADE SKIPPED",
+                "skip_reason": "Emergency stop is active",
+                "message": "Emergency stop activated before sell order; no new sell was submitted.",
+                "buy_order_id": buy_order_id,
+                "recovery_required": True,
+            }
 
         print(
             "\n🚨 SUBMITTING LIVE SELL..."
@@ -2898,6 +2948,9 @@ def execute_live_real_trade(
 
             "mode":
                 "LIVE",
+
+            "exchange_confirmed":
+                True,
         },
     }
 

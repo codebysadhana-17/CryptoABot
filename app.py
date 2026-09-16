@@ -7,7 +7,12 @@ import time
 from flask import Flask, jsonify, render_template, request
 
 import config
-from arbitrage import analyze_market, execute_real_trade
+from arbitrage import (
+    analyze_market,
+    daily_loss_limit_reached,
+    emergency_stop_active,
+    execute_real_trade,
+)
 from database import (
     create_database,
     get_all_trades,
@@ -74,6 +79,10 @@ def start_background_auto_trader():
                     "TRADING_MODE",
                     "LIVE"
                 )
+
+                if emergency_stop_active() or daily_loss_limit_reached():
+                    time.sleep(getattr(config, "REFRESH_INTERVAL", 2))
+                    continue
 
                 # -------------------------------------------------
                 # Safety: only run when explicitly enabled AND armed
@@ -146,6 +155,19 @@ def start_background_auto_trader():
 
 
 start_background_auto_trader()
+
+
+@app.route("/api/emergency-stop", methods=["GET", "POST"])
+def emergency_stop_api():
+    if request.method == "POST":
+        config.EMERGENCY_STOP = True
+    return jsonify({
+        "success": True,
+        "emergency_stop": emergency_stop_active(),
+        "message": "Emergency stop is active; new orders are blocked."
+        if emergency_stop_active()
+        else "Emergency stop is inactive.",
+    })
 
 
 # =====================================================

@@ -14,6 +14,7 @@ import config
 
 from database import (
     create_database,
+    get_today_live_profit,
     save_trade,
 )
 
@@ -29,6 +30,16 @@ from exchange import (
 
 last_trade_time = 0
 last_trade_key = None
+
+
+def emergency_stop_active():
+    return bool(getattr(config, "EMERGENCY_STOP", True))
+
+
+def daily_loss_limit_reached():
+    daily_loss = get_today_live_profit()
+    limit = float(getattr(config, "MAX_DAILY_LOSS_USDT", 0.0))
+    return limit >= 0 and daily_loss <= -limit
 
 
 # ============================================================
@@ -390,6 +401,12 @@ def execute_real_trade(
             "message":
                 "Only LIVE trading is supported.",
         }
+
+    if emergency_stop_active():
+        return {"success": False, "status": "TRADE SKIPPED", "skip_reason": "Emergency stop is active", "message": "Emergency stop is active; no order was submitted."}
+
+    if daily_loss_limit_reached():
+        return {"success": False, "status": "TRADE SKIPPED", "skip_reason": "Daily loss limit reached", "message": "Daily loss limit reached; no order was submitted."}
 
     # ========================================================
     # MARKET DATA CHECK
